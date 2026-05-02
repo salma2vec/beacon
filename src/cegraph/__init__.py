@@ -1,0 +1,6 @@
+"""Public package entrypoints for beacon."""
+
+__all__ = ["__version__"]
+
+__version__ = "0.1.0"
+
