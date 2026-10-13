@@ -39,7 +39,8 @@ def main() -> None:
         repo.mkdir()
         (repo / "calc.py").write_text("def add(a, b):\n    return a + b\n")
         (repo / "test_calc.py").write_text(
-            "from calc import add\nassert add(2, 3) == 5\nassert add(-2, 3) == 1\n"
+            "from calc import add\n\ndef test_positive():\n    assert add(2, 3) == 5\n"
+            "\ndef test_negative():\n    assert add(-2, 3) == 1\n"
         )
         for command in (
             ["git", "init", "-q"],
@@ -65,7 +66,7 @@ def main() -> None:
             "    return a + b",
             "    return a - b",
             256,
-            test_command=f"{shlex.quote(sys.executable)} test_calc.py",
+            test_command=f"{shlex.quote(sys.executable)} -m pytest -q test_calc.py",
         )
         manifest = base / "tasks.jsonl"
         manifest.write_text(json.dumps(asdict(task)) + "\n")

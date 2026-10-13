@@ -56,8 +56,13 @@ this is a baseline implementation, not a learned retriever.
 
 Supply a JSONL manifest with one task per row: `repo`, `commit`, `bug_location`
 (`path.py:line`), `mutation_type`, `original_line`, `mutated_line`, `token_budget`,
-and a `test_command`. Use an immutable commit hash and an argv-style test command,
-for example `python -m pytest -q tests/test_retry.py`; shell pipelines are not supported.
+and a `test_command`. Use an immutable commit hash and a pytest command, for example
+`python -m pytest -q tests/test_retry.py`. Scoring supports pytest only, using the
+harness Python interpreter and installed pytest in isolated import mode. Custom
+scripts, shell pipelines and alternate runners need a structured adapter and are
+not supported for scoring. Install the target repository dependencies into the
+harness environment. Plugin autoload and configured `addopts` are disabled; pass
+test paths/node IDs and simple reporting flags (`-q`, `-v`, `--tb=short`) explicitly.
 The bundled `eval_tasks_full.jsonl` is intentionally empty: there is no released
 large-scale validated task corpus or measured LLM benchmark in this repository.
 
@@ -79,12 +84,20 @@ for untrusted code. Subprocesses have a credential-free environment, temporary h
 60-second default timeout and 1 MiB captured-output limit; these are not a sandbox.
 The OpenAI adapter requires an API key and can incur API charges.
 
-Each scored task must pass tests before mutation and fail them after mutation.
+Each scored task must complete a nonempty pytest suite before mutation, then
+complete the same suite with failures after mutation. A fresh JUnit report outside
+the checkout records original test IDs. A repair only passes when all those test
+IDs complete and pass, with no skips, errors, missing reports or inconsistent
+counts. A zero exit status alone never establishes success; direct `sys.exit(0)`
+and `os._exit(0)` bypasses are regression-tested.
 Retrieval sees the mutated pinned snapshot, never the caller's working tree. Every
 repair starts from a fresh copy. Only the task's declared Python source file may be
 patched; test-file, symlink, mode-change and escaping-path edits are rejected. A
 missing test command, timeout, invalid patch or failing test cannot score as a pass.
-Test command quality remains the experiment author's responsibility.
+Test quality remains the experiment author's responsibility. These completion
+checks are not tamper-proof: adversarial code in the pytest process can forge
+reports or interfere with the runner. Strong adversarial evaluation requires an
+external sandbox and independently protected test instrumentation.
 
 `exact` queries reveal the original line and are oracle controls. The fallback
 `dev_report` does too; supply a real report in `prompt` to avoid this. `vague` queries

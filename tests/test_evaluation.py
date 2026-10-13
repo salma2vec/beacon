@@ -15,6 +15,7 @@ from cegraph.evaluation import (
     apply_patch_text,
     evaluate_patch,
     repo_snapshot,
+    run_pytest_tests,
     run_test_command,
 )
 from cegraph.models import RepairPrompt, RepairResponse, TaskRecord
@@ -27,7 +28,8 @@ def fixture_repo(tmp_path: Path) -> tuple[Path, TaskRecord]:
     root.mkdir()
     (root / "calc.py").write_text("def add(a, b):\n    return a + b\n")
     (root / "test_calc.py").write_text(
-        "from calc import add\nassert add(2, 3) == 5\nassert add(-2, 3) == 1\n"
+        "from calc import add\n\ndef test_positive():\n    assert add(2, 3) == 5\n"
+        "\ndef test_negative():\n    assert add(-2, 3) == 1\n"
     )
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
     subprocess.run(["git", "add", "."], cwd=root, check=True)
@@ -54,7 +56,7 @@ def fixture_repo(tmp_path: Path) -> tuple[Path, TaskRecord]:
         "    return a + b",
         "    return a - b",
         256,
-        test_command=f"{shlex.quote(sys.executable)} test_calc.py",
+        test_command=f"{shlex.quote(sys.executable)} -m pytest -q test_calc.py",
     )
 
 
@@ -86,11 +88,15 @@ def test_pinned_mutation_and_evaluation(tmp_path: Path) -> None:
     root, task = fixture_repo(tmp_path)
     (root / "calc.py").write_text("dirty checkout")
     with repo_snapshot(root, task.commit) as snapshot:
-        assert run_test_command(snapshot, task.test_command)[0] == 0
+        baseline = run_pytest_tests(snapshot, task.test_command)
+        assert baseline.passed
         apply_mutation(snapshot, task)
         assert run_test_command(snapshot, task.test_command)[0] == 1
         result = evaluate_patch(
-            snapshot, task, response("calc.py", "def add(a, b):\n    return a + b\n")
+            snapshot,
+            task,
+            response("calc.py", "def add(a, b):\n    return a + b\n"),
+            required_test_ids=baseline.test_ids,
         )
         assert result.pass_at_1
     assert not snapshot.exists()
@@ -209,3 +215,78 @@ def test_no_gold_source_from_working_tree(tmp_path: Path) -> None:
         ]
     )
     assert output.read_text()
+
+
+@pytest.mark.parametrize("patch", ["import sys\nsys.exit(0)\n", "import os\nos._exit(0)\n"])
+def test_successful_early_exit_cannot_score(tmp_path: Path, patch: str) -> None:
+    root, task = fixture_repo(tmp_path)
+    baseline = run_pytest_tests(root, task.test_command)
+    assert baseline.passed and len(baseline.test_ids) == 2
+    apply_mutation(root, task)
+    result = evaluate_patch(
+        root, task, response("calc.py", patch), required_test_ids=baseline.test_ids
+    )
+    assert not result.pass_at_1 and not result.tests_passed
+    assert result.metadata["test_run_completed"] is False
+
+
+def test_custom_test_command_cannot_score(tmp_path: Path) -> None:
+    root, task = fixture_repo(tmp_path)
+    baseline = run_pytest_tests(root, task.test_command)
+    custom = replace(task, test_command=shlex.join([sys.executable, "test_calc.py"]))
+    result = evaluate_patch(
+        root,
+        custom,
+        response("calc.py", "import sys\nsys.exit(0)\n"),
+        required_test_ids=baseline.test_ids,
+    )
+    assert not result.pass_at_1 and "requires pytest" in result.stderr
+
+
+def test_empty_or_skipped_tests_cannot_complete(tmp_path: Path) -> None:
+    root, task = fixture_repo(tmp_path)
+    (root / "test_calc.py").write_text("pass\n")
+    result = run_pytest_tests(root, task.test_command)
+    assert not result.completed and not result.passed
+    (root / "test_calc.py").write_text(
+        "import pytest\n@pytest.mark.skip(reason='bypass')\ndef test_skip():\n    assert False\n"
+    )
+    result = run_pytest_tests(root, task.test_command)
+    assert result.exit_code == 0
+    assert not result.completed and not result.passed
+
+
+def test_required_original_test_ids_must_all_complete(tmp_path: Path) -> None:
+    root, task = fixture_repo(tmp_path)
+    baseline = run_pytest_tests(root, task.test_command)
+    (root / "test_calc.py").write_text("def test_positive():\n    assert True\n")
+    result = run_pytest_tests(root, task.test_command, required_test_ids=baseline.test_ids)
+    assert result.exit_code == 0
+    assert not result.completed and "test IDs differ" in result.reason
+
+
+def test_missing_report_even_after_exit_zero_cannot_complete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import cegraph.evaluation as evaluation
+
+    root, task = fixture_repo(tmp_path)
+    monkeypatch.setattr(evaluation, "run_test_command", lambda *args: (0, "all tests passed", ""))
+    result = run_pytest_tests(root, task.test_command)
+    assert result.exit_code == 0 and not result.passed
+    assert "report is missing" in result.reason
+
+
+def test_evaluation_requires_trusted_original_test_ids(tmp_path: Path) -> None:
+    root, task = fixture_repo(tmp_path)
+    result = evaluate_patch(root, task, response("calc.py", "import sys\nsys.exit(0)\n"))
+    assert not result.pass_at_1 and "baseline test IDs" in result.stderr
+    assert (root / "calc.py").read_text() == "def add(a, b):\n    return a + b\n"
+
+
+def test_runner_is_not_shadowed_by_repository_pytest_module(tmp_path: Path) -> None:
+    root, task = fixture_repo(tmp_path)
+    (root / "pytest.py").write_text("raise RuntimeError('untrusted pytest module')\n")
+    result = run_pytest_tests(root, task.test_command)
+    assert result.passed and len(result.test_ids) == 2

@@ -9,14 +9,18 @@ import json
 import math
 import os
 import py_compile
+import re
 import shlex
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
+from dataclasses import dataclass
 from pathlib import Path
 
 from .models import EvaluationResult, RepairResponse, TaskRecord
@@ -155,6 +159,8 @@ def run_test_command(
             "TMPDIR": process_home,
             "PYTHONDONTWRITEBYTECODE": "1",
             "PYTHONNOUSERSITE": "1",
+            "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+            "PYTEST_ADDOPTS": "",
         }
         with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
             try:
@@ -197,6 +203,136 @@ def run_test_command(
             if reason:
                 return 124, stdout, stderr + "\n" + reason
             return process.returncode, stdout, stderr
+
+
+@dataclass(frozen=True)
+class PytestRun:
+    """Validated pytest completion, separate from process exit success."""
+
+    exit_code: int
+    stdout: str
+    stderr: str
+    completed: bool = False
+    test_ids: frozenset[str] = frozenset()
+    failed_ids: frozenset[str] = frozenset()
+    reason: str = ""
+
+    @property
+    def passed(self) -> bool:
+        return self.completed and self.exit_code == 0 and not self.failed_ids
+
+
+def _pytest_arguments(test_command: str | None) -> list[str]:
+    """Accept a narrow pytest command; the harness selects its own interpreter."""
+    command = shlex.split(test_command or "")
+    if command and command[0] == "pytest":
+        arguments = command[1:]
+    elif len(command) >= 3 and command[1:3] == ["-m", "pytest"]:
+        executable = command[0]
+        if "/" in executable:
+            if Path(executable).resolve() != Path(sys.executable).resolve():
+                raise ValueError("Scored pytest must use the harness Python interpreter")
+        elif not re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable):
+            raise ValueError("Scored evaluation supports only python -m pytest")
+        arguments = command[3:]
+    else:
+        raise ValueError(
+            "Scored evaluation requires pytest; custom commands need a structured adapter"
+        )
+    flags = {
+        "-q",
+        "-v",
+        "--disable-warnings",
+        "--strict-markers",
+        "--strict-config",
+        "--tb=short",
+        "--tb=no",
+        "--tb=long",
+    }
+    for argument in arguments:
+        if argument.startswith("-") and argument not in flags:
+            raise ValueError(f"Unsupported scored pytest option: {argument}")
+        if not argument or "\x00" in argument:
+            raise ValueError("Invalid pytest argument")
+    return arguments
+
+
+def run_pytest_tests(
+    repo_root: Path,
+    test_command: str | None,
+    timeout: float = 60,
+    required_test_ids: frozenset[str] | None = None,
+) -> PytestRun:
+    """Require a complete, nonempty JUnit run with unchanged original test IDs.
+
+    Skips, collection/setup errors, missing reports, and early successful exits are
+    failures. The report lives outside the checkout. Same-process adversarial code
+    can still forge runner output; this is not tamper-proof sandboxing.
+    """
+    try:
+        arguments = _pytest_arguments(test_command)
+    except ValueError as error:
+        return PytestRun(2, "", str(error), reason=str(error))
+    with tempfile.TemporaryDirectory(prefix="beacon-pytest-") as directory:
+        report = Path(directory) / "results.xml"
+        command = shlex.join(
+            [
+                sys.executable,
+                "-I",
+                "-m",
+                "pytest",
+                *arguments,
+                "-o",
+                "addopts=",
+                "-o",
+                "junit_family=xunit2",
+                "-o",
+                "junit_suite_name=beacon",
+                "--junitxml",
+                str(report),
+            ]
+        )
+        code, stdout, stderr = run_test_command(repo_root, command, timeout)
+        try:
+            if code not in {0, 1}:
+                raise ValueError(f"pytest did not finish normally (exit {code})")
+            if not report.is_file() or report.is_symlink():
+                raise ValueError("pytest completion report is missing")
+            if report.stat().st_size > 4_194_304:
+                raise ValueError("pytest completion report exceeds size limit")
+            root = ET.parse(report).getroot()
+            suites = root.findall("testsuite")
+            if root.tag != "testsuites" or len(suites) != 1:
+                raise ValueError("Invalid pytest completion report structure")
+            suite = suites[0]
+            cases = suite.findall("testcase")
+            count = int(suite.attrib["tests"])
+            failures = int(suite.attrib["failures"])
+            if count <= 0 or count != len(cases):
+                raise ValueError("pytest must complete a nonempty set of tests")
+            if int(suite.attrib["errors"]) != 0 or int(suite.attrib["skipped"]) != 0:
+                raise ValueError(
+                    "pytest errors or skipped tests cannot count as behavioral completion"
+                )
+            ids: set[str] = set()
+            failed: set[str] = set()
+            for case in cases:
+                identifier = json.dumps([case.attrib["classname"], case.attrib["name"]])
+                if identifier in ids or not case.attrib["name"]:
+                    raise ValueError("pytest completion has duplicate or missing test IDs")
+                if case.find("error") is not None or case.find("skipped") is not None:
+                    raise ValueError("pytest did not execute every required test")
+                ids.add(identifier)
+                if case.find("failure") is not None:
+                    failed.add(identifier)
+            if failures != len(failed) or (code == 0) != (not failed):
+                raise ValueError("pytest process status and completion report disagree")
+            if required_test_ids is not None and ids != required_test_ids:
+                raise ValueError("pytest completed test IDs differ from the original baseline")
+            return PytestRun(code, stdout, stderr, True, frozenset(ids), frozenset(failed))
+        except (OSError, ValueError, KeyError, ET.ParseError) as error:
+            reason = str(error)
+            return PytestRun(code, stdout, stderr + "\n" + reason, reason=reason)
 
 
 def prepare_repo_snapshot(repo_root: Path, commit: str) -> Path:
@@ -248,16 +384,37 @@ def repo_snapshot(repo_root: Path, commit: str) -> Iterator[Path]:
 
 
 def evaluate_patch(
-    repo_root: Path, task: TaskRecord, response: RepairResponse, timeout: float = 60
+    repo_root: Path,
+    task: TaskRecord,
+    response: RepairResponse,
+    timeout: float = 60,
+    required_test_ids: frozenset[str] | None = None,
 ) -> EvaluationResult:
+    if not required_test_ids:
+        return EvaluationResult(
+            False, False, False, 2, "", "Original baseline test IDs are required"
+        )
     applied, reason = apply_patch_text(repo_root, task, response)
     if not applied:
         return EvaluationResult(False, False, False, 1, "", reason)
     compiled, compile_output = compile_python_repo(repo_root)
     if not compiled:
         return EvaluationResult(False, False, False, 1, "", compile_output)
-    exit_code, stdout, stderr = run_test_command(repo_root, task.test_command, timeout)
-    passed = exit_code == 0
+    result = run_pytest_tests(repo_root, task.test_command, timeout, required_test_ids)
     return EvaluationResult(
-        True, passed, passed, exit_code, stdout, stderr, {"apply_reason": reason, "evaluated": True}
+        True,
+        result.passed,
+        result.passed,
+        result.exit_code,
+        result.stdout,
+        result.stderr,
+        {
+            "apply_reason": reason,
+            "evaluated": True,
+            "test_runner": "pytest-junit",
+            "test_run_completed": result.completed,
+            "test_ids": sorted(result.test_ids),
+            "failed_test_ids": sorted(result.failed_ids),
+            "completion_error": result.reason,
+        },
     )

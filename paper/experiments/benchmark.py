@@ -11,7 +11,7 @@ from dataclasses import asdict, replace
 from pathlib import Path
 
 from cegraph import CodebaseGraph, assemble_context, available_methods
-from cegraph.evaluation import apply_mutation, evaluate_patch, repo_snapshot, run_test_command
+from cegraph.evaluation import apply_mutation, evaluate_patch, repo_snapshot, run_pytest_tests
 from cegraph.llm import EchoRepairClient, OpenAIRepairClient, RepairClient
 from cegraph.models import BenchmarkResult, RepairPrompt, TaskRecord, task_identifier
 
@@ -118,17 +118,22 @@ def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None =
                     ["git", "rev-parse", "HEAD"], cwd=snapshot, text=True
                 ).strip()
                 if scored:
-                    baseline = run_test_command(snapshot, task.test_command, args.test_timeout)
-                    if baseline[0] != 0:
+                    baseline = run_pytest_tests(snapshot, task.test_command, args.test_timeout)
+                    if not baseline.passed:
                         raise ValueError(
-                            f"Original baseline failed for {task_identifier(task)}: {baseline[2]}"
+                            f"Original baseline failed for {task_identifier(task)}: "
+                            f"{baseline.stderr}"
                         )
                 apply_mutation(snapshot, task)
                 if scored:
-                    mutant = run_test_command(snapshot, task.test_command, args.test_timeout)
-                    if mutant[0] != 1:
+                    mutant = run_pytest_tests(
+                        snapshot, task.test_command, args.test_timeout, baseline.test_ids
+                    )
+                    if not mutant.completed or not mutant.failed_ids or mutant.exit_code != 1:
                         raise ValueError(
-                            "Mutation must fail assertions (exit 1), not pass or fail setup"
+                            "Mutation must complete the original pytest tests "
+                            "with assertion failures; "
+                            f"{mutant.reason}"
                         )
                 graph = CodebaseGraph.from_repo(snapshot)
                 for query_type in query_types:
@@ -161,7 +166,7 @@ def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None =
                                 )
                                 try:
                                     evaluation = evaluate_patch(
-                                        trial, task, response, args.test_timeout
+                                        trial, task, response, args.test_timeout, baseline.test_ids
                                     )
                                 finally:
                                     shutil.rmtree(trial)
@@ -177,8 +182,10 @@ def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None =
                                     "exit_code": evaluation.exit_code,
                                     "stdout": evaluation.stdout,
                                     "stderr": evaluation.stderr,
-                                    "baseline_exit_code": baseline[0],
-                                    "mutant_exit_code": mutant[0],
+                                    "baseline_exit_code": baseline.exit_code,
+                                    "baseline_test_ids": sorted(baseline.test_ids),
+                                    "mutant_exit_code": mutant.exit_code,
+                                    "mutant_failed_test_ids": sorted(mutant.failed_ids),
                                 }
                             result = BenchmarkResult(
                                 repo=task.repo,
