@@ -19,13 +19,17 @@ def load_results(run_dir: Path) -> list[dict[str, object]]:
 def adaptive_choices(results: list[dict[str, object]]) -> dict[tuple[int, str], str]:
     grouped: dict[tuple[int, str, str], list[int]] = defaultdict(list)
     for row in results:
+        if row["pass_at_1"] is None:
+            continue
         grouped[(int(row["budget"]), str(row["query_type"]), str(row["method"]))].append(
             1 if row["pass_at_1"] else 0
         )
     winners: dict[tuple[int, str], str] = {}
     for budget, query_type, method in grouped:
         key = (budget, query_type)
-        current = sum(grouped[(budget, query_type, method)]) / len(grouped[(budget, query_type, method)])
+        current = sum(grouped[(budget, query_type, method)]) / len(
+            grouped[(budget, query_type, method)]
+        )
         previous_method = winners.get(key)
         if previous_method is None:
             winners[key] = method
@@ -50,6 +54,7 @@ def compare_methods(
         if row["pass_at_1"]
         else 0
         for row in results
+        if row["pass_at_1"] is not None
     }
     tasks = {(task_id, budget, query_type) for task_id, budget, query_type, _method in index}
     for task_id, budget, query_type in tasks:
@@ -81,4 +86,3 @@ def main(argv: list[str] | None = None) -> Path:
 
 if __name__ == "__main__":
     main()
-

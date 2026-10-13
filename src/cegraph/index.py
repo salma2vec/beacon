@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from hashlib import sha256
-from typing import Iterable
 
 from .models import Node, RankedNode
 
@@ -125,19 +125,17 @@ def unique_preserving_order(values: Iterable[str]) -> list[str]:
     return output
 
 
-
-
 class CodebaseIndex:
     def __init__(self, graph: object) -> None:
         self.graph = graph
 
     @classmethod
-    def from_graph(cls, graph: object) -> "CodebaseIndex":
+    def from_graph(cls, graph: object) -> CodebaseIndex:
         return cls(graph)
 
     def search(self, query: str, k: int = 10) -> list[RankedNode]:
         if hasattr(self.graph, "lexical_search"):
-            results = self.graph.lexical_search(query, k)  # type: ignore[attr-defined]
+            results = self.graph.lexical_search(query, k)
         else:
             results = []
         ranked: list[RankedNode] = []

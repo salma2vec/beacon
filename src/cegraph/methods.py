@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 from collections import defaultdict
-from typing import Iterable
+from collections.abc import Iterable
 
 from .graph import CodebaseGraph
 from .models import AssembledContext, CandidateScore, ContextChunk, MethodResult
@@ -59,7 +59,9 @@ def _build_candidates(
 ) -> list[CandidateScore]:
     query_embedding = graph.embed_query(query)
     hop_lookup = {node_id: hop for node_id, hop in node_hops}
-    semantic_lookup = defaultdict(float, graph.semantic_neighbors(query_embedding, k=len(graph.nodes)))
+    semantic_lookup = defaultdict(
+        float, graph.semantic_neighbors(query_embedding, k=len(graph.nodes))
+    )
     candidates: list[CandidateScore] = []
     for node_id, hop_count in hop_lookup.items():
         coverage = {node_id, *(neighbor for neighbor, _ in graph.graph_neighbors(node_id, depth=1))}
@@ -96,9 +98,17 @@ def _chunks_from_selection(
                 "semantic_similarity": candidate.semantic_similarity,
             },
         )
+        trial = AssembledContext(
+            method=method, budget=budget, chunks=[*chunks, chunk], total_tokens=0
+        )
+        rendered_cost = graph.token_counter.count(trial.render())
+        if rendered_cost > budget:
+            continue
         chunks.append(chunk)
-        total_tokens += chunk.token_cost
-    context = AssembledContext(method=method, budget=budget, chunks=chunks, total_tokens=total_tokens)
+        total_tokens = rendered_cost
+    context = AssembledContext(
+        method=method, budget=budget, chunks=chunks, total_tokens=total_tokens
+    )
     return MethodResult(
         method=method,
         assembled_context=context,
@@ -114,6 +124,8 @@ def assemble_context(
     bug_location: str | None = None,
     alpha: float = 0.5,
 ) -> MethodResult:
+    if budget < 0:
+        raise ValueError("budget must be non-negative")
     if method not in METHODS:
         available = ", ".join(METHODS)
         raise ValueError(f"Unknown method '{method}'. Available methods: {available}")
@@ -122,9 +134,10 @@ def assemble_context(
         context = AssembledContext(method=method, budget=budget, chunks=[], total_tokens=0)
         return MethodResult(method=method, assembled_context=context, selected_node_ids=[])
 
+    selected: list[CandidateScore]
     if method == "target_file":
         node_ids = graph.node_ids_for_file((bug_location or "").partition(":")[0])
-        selected: list[CandidateScore] = []
+        selected = []
         spent = 0
         for node_id in node_ids:
             token_cost = graph.token_count(node_id)
@@ -142,45 +155,26 @@ def assemble_context(
             spent += token_cost
         return _chunks_from_selection(graph, selected, budget, method, alpha)
 
-    if method == "bm25":
-        candidate_ids = graph.lexical_search(query, k=32)
-        candidates = _build_candidates(graph, ((node_id, 0) for node_id, _ in candidate_ids), query)
-        return _chunks_from_selection(
-            graph,
-            greedy_budgeted_selection(candidates, budget, alpha=alpha),
-            budget,
-            method,
-            alpha,
-        )
-
-    if method == "keyword_map":
-        candidate_ids = graph.keyword_search(query, k=32)
-        candidates = _build_candidates(graph, ((node_id, 0) for node_id, _ in candidate_ids), query)
-        return _chunks_from_selection(
-            graph,
-            greedy_budgeted_selection(candidates, budget, alpha=alpha),
-            budget,
-            method,
-            alpha,
-        )
-
-    if method in {"vector", "embedding"}:
-        candidate_ids = graph.semantic_neighbors(graph.embed_query(query), k=32)
-        candidates = _build_candidates(graph, ((node_id, 0) for node_id, _ in candidate_ids), query)
-        return _chunks_from_selection(
-            graph,
-            greedy_budgeted_selection(candidates, budget, alpha=alpha),
-            budget,
-            method,
-            alpha,
-        )
+    if method in {"bm25", "keyword_map", "vector", "embedding"}:
+        if method == "bm25":
+            ranked = graph.lexical_search(query, k=len(graph.nodes))
+        elif method == "keyword_map":
+            ranked = graph.keyword_search(query, k=len(graph.nodes))
+        else:
+            ranked = graph.semantic_neighbors(graph.embed_query(query), k=len(graph.nodes))
+        # Baselines preserve their own ranking; graph-aware optimization is BCA-only.
+        candidates = [
+            CandidateScore(node_id, graph.token_count(node_id), score, 0)
+            for node_id, score in ranked
+        ]
+        return _chunks_from_selection(graph, candidates, budget, method, alpha)
 
     if method == "bca_no_scoring":
         pool = _candidate_pool(graph, query, bug_location, depth=2, include_closure=True)
         rng = random.Random(7)
         shuffled = list(pool)
         rng.shuffle(shuffled)
-        selected: list[CandidateScore] = []
+        selected = []
         spent = 0
         for node_id, hop_count in shuffled:
             token_cost = graph.token_count(node_id)

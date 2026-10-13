@@ -37,7 +37,9 @@ def test_method_registry_is_complete() -> None:
 
 def test_budget_enforcement_and_empty_method(tmp_path: Path) -> None:
     graph = CodebaseGraph.from_repo(build_repo(tmp_path))
-    empty = assemble_context(graph, "fix broken", "no_retrieval", budget=50, bug_location="app.py:4")
+    empty = assemble_context(
+        graph, "fix broken", "no_retrieval", budget=50, bug_location="app.py:4"
+    )
     assert empty.assembled_context.total_tokens == 0
     assert empty.selected_node_ids == []
 

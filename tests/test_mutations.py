@@ -18,4 +18,3 @@ def greet() -> str:
     candidates = discover_mutations_in_file(file_path, tmp_path)
     assert candidates
     assert any(candidate.mutation_type == "type_change" for candidate in candidates)
-

@@ -21,6 +21,8 @@ def summarize_router_study(results: list[dict[str, object]]) -> dict[str, object
     overall: dict[str, list[int]] = defaultdict(list)
     by_task: dict[tuple[str, int, str, str], int] = {}
     for row in results:
+        if row["pass_at_1"] is None:
+            continue
         method = str(row["method"])
         budget = int(row["budget"])
         query_type = str(row["query_type"])
@@ -29,22 +31,28 @@ def summarize_router_study(results: list[dict[str, object]]) -> dict[str, object
         overall[method].append(score)
         by_task[(str(row["task_id"]), budget, query_type, method)] = score
 
+    if not overall:
+        return {"status": "no_scored_results"}
     best_fixed = max(overall.items(), key=lambda item: sum(item[1]) / len(item[1]))[0]
     adaptive_by_cell: dict[tuple[int, str], str] = {}
     for budget, query_type, method in grouped:
-        current_score = sum(grouped[(budget, query_type, method)]) / len(grouped[(budget, query_type, method)])
+        current_score = sum(grouped[(budget, query_type, method)]) / len(
+            grouped[(budget, query_type, method)]
+        )
         key = (budget, query_type)
         previous = adaptive_by_cell.get(key)
         if previous is None:
             adaptive_by_cell[key] = method
             continue
-        previous_score = sum(grouped[(budget, query_type, previous)]) / len(grouped[(budget, query_type, previous)])
+        previous_score = sum(grouped[(budget, query_type, previous)]) / len(
+            grouped[(budget, query_type, previous)]
+        )
         if current_score > previous_score:
             adaptive_by_cell[key] = method
 
     adaptive_scores: list[int] = []
     fixed_scores: list[int] = []
-    for task_id, budget, query_type, _method in sorted(by_task):
+    for task_id, budget, query_type in sorted({key[:3] for key in by_task}):
         adaptive_method = adaptive_by_cell[(budget, query_type)]
         adaptive_scores.append(by_task[(task_id, budget, query_type, adaptive_method)])
         fixed_scores.append(by_task[(task_id, budget, query_type, best_fixed)])
@@ -55,8 +63,12 @@ def summarize_router_study(results: list[dict[str, object]]) -> dict[str, object
         "best_fixed_method": best_fixed,
         "adaptive_pass_rate": adaptive_rate,
         "fixed_pass_rate": fixed_rate,
-        "relative_improvement": adaptive_rate - fixed_rate,
-        "adaptive_by_cell": {f"{budget}:{query_type}": method for (budget, query_type), method in adaptive_by_cell.items()},
+        "absolute_improvement": adaptive_rate - fixed_rate,
+        "analysis": "in_sample_oracle_upper_bound_not_held_out_router",
+        "adaptive_by_cell": {
+            f"{budget}:{query_type}": method
+            for (budget, query_type), method in adaptive_by_cell.items()
+        },
     }
 
 
@@ -73,4 +85,3 @@ def main(argv: list[str] | None = None) -> Path:
 
 if __name__ == "__main__":
     main()
-

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .models import TaskRecord
+from .parser import iter_python_files
 
 
 @dataclass(slots=True, frozen=True)
@@ -54,7 +55,9 @@ def _mutate_line(line: str) -> list[tuple[str, str]]:
     return mutations
 
 
-def syntactically_valid_after_change(source_lines: list[str], line_number: int, replacement: str) -> bool:
+def syntactically_valid_after_change(
+    source_lines: list[str], line_number: int, replacement: str
+) -> bool:
     mutated = source_lines.copy()
     mutated[line_number - 1] = replacement
     try:
@@ -91,7 +94,7 @@ def build_task_records(
     query_type: str = "exact",
 ) -> list[TaskRecord]:
     tasks: list[TaskRecord] = []
-    for file_path in repo_root.rglob("*.py"):
+    for file_path in iter_python_files(repo_root):
         if any(part.startswith(".") for part in file_path.relative_to(repo_root).parts):
             continue
         for candidate, budget in itertools.product(
@@ -112,4 +115,3 @@ def build_task_records(
                 )
             )
     return tasks
-

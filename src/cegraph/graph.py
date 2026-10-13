@@ -46,19 +46,29 @@ class CodebaseGraph:
         for node_id, node in self.nodes.items():
             file_index[node.file_path].append(node_id)
             if node.parent_id and node.parent_id in self.nodes and node.parent_id != node_id:
-                outgoing[node_id].append(Edge(source=node_id, target=node.parent_id, kind=EdgeKind.ASSIGNS_TO))
-                incoming[node.parent_id].append(Edge(source=node_id, target=node.parent_id, kind=EdgeKind.ASSIGNS_TO))
-                outgoing[node.parent_id].append(Edge(source=node.parent_id, target=node_id, kind=EdgeKind.ASSIGNS_TO))
-                incoming[node_id].append(Edge(source=node.parent_id, target=node_id, kind=EdgeKind.ASSIGNS_TO))
+                outgoing[node_id].append(
+                    Edge(source=node_id, target=node.parent_id, kind=EdgeKind.ASSIGNS_TO)
+                )
+                incoming[node.parent_id].append(
+                    Edge(source=node_id, target=node.parent_id, kind=EdgeKind.ASSIGNS_TO)
+                )
+                outgoing[node.parent_id].append(
+                    Edge(source=node.parent_id, target=node_id, kind=EdgeKind.ASSIGNS_TO)
+                )
+                incoming[node_id].append(
+                    Edge(source=node.parent_id, target=node_id, kind=EdgeKind.ASSIGNS_TO)
+                )
         for node_ids in file_index.values():
             node_ids.sort(key=lambda identifier: self.nodes[identifier].lineno)
-        object.__setattr__(self, '_outgoing', outgoing)
-        object.__setattr__(self, '_incoming', incoming)
-        object.__setattr__(self, '_file_index', file_index)
+        object.__setattr__(self, "_outgoing", outgoing)
+        object.__setattr__(self, "_incoming", incoming)
+        object.__setattr__(self, "_file_index", file_index)
 
     @classmethod
-    def from_repo(cls, repo_root: Path) -> "CodebaseGraph":
-        parsed_modules = [parse_python_file(repo_root, path) for path in iter_python_files(repo_root)]
+    def from_repo(cls, repo_root: Path) -> CodebaseGraph:
+        parsed_modules = [
+            parse_python_file(repo_root, path) for path in iter_python_files(repo_root)
+        ]
         nodes = {node.id: node for parsed in parsed_modules for node in parsed.nodes}
         edges = cls._resolve_edges(parsed_modules, nodes)
         documents = {node_id: build_node_document(node) for node_id, node in nodes.items()}
@@ -77,7 +87,9 @@ class CodebaseGraph:
     @staticmethod
     def _resolve_edges(parsed_modules: list[ParsedModule], nodes: dict[str, Node]) -> list[Edge]:
         module_nodes = {
-            parsed.module_name: next(node.id for node in parsed.nodes if node.kind.value == "module")
+            parsed.module_name: next(
+                node.id for node in parsed.nodes if node.kind.value == "module"
+            )
             for parsed in parsed_modules
         }
         scoped_symbols: dict[tuple[str, str], str] = {}
@@ -96,7 +108,10 @@ class CodebaseGraph:
                     return scoped_symbols.get((resolved_module, imported_name))
                 return module_nodes.get(resolved_module)
 
-            if "." in target_ref and (pending.source_module, target_ref.split(".")[0]) in scoped_symbols:
+            if (
+                "." in target_ref
+                and (pending.source_module, target_ref.split(".")[0]) in scoped_symbols
+            ):
                 first, _, rest = target_ref.partition(".")
                 prefix = scoped_symbols[(pending.source_module, first)]
                 candidate = f"{nodes[prefix].qualified_name}.{rest}"
@@ -160,7 +175,7 @@ class CodebaseGraph:
             adjacent_edges = [*self._outgoing.get(current, []), *self._incoming.get(current, [])]
             for edge in adjacent_edges:
                 neighbor = edge.target if edge.source == current else edge.source
-                if neighbor in visited:
+                if neighbor in visited or neighbor not in self.nodes:
                     continue
                 visited.add(neighbor)
                 next_depth = hop_count + 1
@@ -207,9 +222,12 @@ class CodebaseGraph:
     def candidate_closure(self, seeds: list[str], depth: int) -> list[tuple[str, int]]:
         results: list[tuple[str, int]] = []
         for seed in unique_preserving_order(seeds):
+            if seed not in self.nodes:
+                continue
             results.append((seed, 0))
             results.extend(self.graph_neighbors(seed, depth))
         ordered = unique_preserving_order(node_id for node_id, _ in results)
-        hop_lookup = {node_id: hop for node_id, hop in reversed(results)}
+        hop_lookup: dict[str, int] = {}
+        for node_id, hop in results:
+            hop_lookup[node_id] = min(hop, hop_lookup.get(node_id, hop))
         return [(node_id, hop_lookup[node_id]) for node_id in ordered]
-

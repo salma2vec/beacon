@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import ast
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 from .models import EdgeKind, Node, NodeKind
 
@@ -112,7 +112,9 @@ class ModuleParser(ast.NodeVisitor):
     def _add_node(self, node_name: str, kind: NodeKind, node: ast.AST, parent_id: str) -> str:
         parent_name = self.nodes_by_id[parent_id].qualified_name
         qualified_name = (
-            f"{parent_name}.{node_name}" if self.node_kinds[parent_id] != NodeKind.MODULE else node_name
+            f"{parent_name}.{node_name}"
+            if self.node_kinds[parent_id] != NodeKind.MODULE
+            else node_name
         )
         identifier = node_id(self.relative_path, qualified_name)
         created = Node(
@@ -124,7 +126,9 @@ class ModuleParser(ast.NodeVisitor):
             lineno=getattr(node, "lineno", 1),
             end_lineno=getattr(node, "end_lineno", getattr(node, "lineno", 1)),
             parent_id=parent_id,
-            docstring=ast.get_docstring(node) if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) else None,
+            docstring=ast.get_docstring(node)
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+            else None,
         )
         self.nodes.append(created)
         self.local_symbols[node_name] = identifier
@@ -165,7 +169,11 @@ class ModuleParser(ast.NodeVisitor):
         self.scope_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:  # noqa: N802
-        kind = NodeKind.METHOD if self.node_kinds[self.current_scope] == NodeKind.CLASS else NodeKind.FUNCTION
+        kind = (
+            NodeKind.METHOD
+            if self.node_kinds[self.current_scope] == NodeKind.CLASS
+            else NodeKind.FUNCTION
+        )
         created_id = self._add_node(node.name, kind, node, self.current_scope)
         for decorator in node.decorator_list:
             self._add_pending_edge(created_id, EdgeKind.DECORATES, expression_name(decorator))
@@ -223,13 +231,16 @@ class ModuleParser(ast.NodeVisitor):
 
 
 def parse_python_file(repo_root: Path, file_path: Path) -> ParsedModule:
+    if file_path.is_symlink() or not file_path.resolve().is_relative_to(repo_root.resolve()):
+        raise ValueError("Source file must be contained in the repository without symlinks")
     source = file_path.read_text(encoding="utf-8")
     return ModuleParser(repo_root, file_path, source).parse()
 
 
 def iter_python_files(repo_root: Path) -> Iterable[Path]:
     for file_path in sorted(repo_root.rglob("*.py")):
+        if file_path.is_symlink() or not file_path.resolve().is_relative_to(repo_root.resolve()):
+            continue
         if any(part.startswith(".") for part in file_path.relative_to(repo_root).parts):
             continue
         yield file_path
-

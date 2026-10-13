@@ -19,6 +19,8 @@ def load_results(run_dir: Path) -> list[dict[str, object]]:
 def aggregate_pass_rates(results: list[dict[str, object]]) -> dict[tuple[str, int, str], float]:
     grouped: dict[tuple[str, int, str], list[int]] = defaultdict(list)
     for row in results:
+        if row["pass_at_1"] is None:
+            continue
         key = (str(row["method"]), int(row["budget"]), str(row["query_type"]))
         grouped[key].append(1 if row["pass_at_1"] else 0)
     return {key: sum(values) / len(values) for key, values in grouped.items()}
@@ -58,4 +60,3 @@ def main(argv: list[str] | None = None) -> dict[str, Path]:
 
 if __name__ == "__main__":
     main()
-

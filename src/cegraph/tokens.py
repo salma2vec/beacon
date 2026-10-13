@@ -1,26 +1,20 @@
-"""Token counting utilities."""
+"""Exact rendered-context token counts using the documented cl100k_base codec."""
 
 from __future__ import annotations
 
-from functools import lru_cache
-
-try:
-    import tiktoken
-except ImportError:  # pragma: no cover - optional in tests
-    tiktoken = None
+import tiktoken
 
 
 class TokenCounter:
-    """Count tokens with `cl100k_base`, or use a stable text fallback."""
+    """Count literal source text, including strings resembling special tokens."""
 
     def __init__(self) -> None:
-        self._encoding = tiktoken.get_encoding("cl100k_base") if tiktoken else None
+        self._encoding = tiktoken.get_encoding("cl100k_base")
+        self._cache: dict[str, int] = {}
 
-    @lru_cache(maxsize=16384)
     def count(self, text: str) -> int:
-        if not text:
-            return 0
-        if self._encoding is not None:
-            return len(self._encoding.encode(text))
-        return max(1, len(text.split()) + len(text) // 16)
-
+        if text not in self._cache:
+            if len(self._cache) >= 16384:
+                self._cache.clear()
+            self._cache[text] = len(self._encoding.encode(text, disallowed_special=()))
+        return self._cache[text]

@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import shutil
+import subprocess
+from dataclasses import asdict, replace
 from pathlib import Path
 
 from cegraph import CodebaseGraph, assemble_context, available_methods
-from cegraph.evaluation import evaluate_patch, prepare_repo_snapshot
+from cegraph.evaluation import apply_mutation, evaluate_patch, repo_snapshot, run_test_command
 from cegraph.llm import EchoRepairClient, OpenAIRepairClient, RepairClient
 from cegraph.models import BenchmarkResult, RepairPrompt, TaskRecord, task_identifier
 
@@ -22,13 +26,22 @@ def parse_csv_strings(value: str) -> list[str]:
 
 def load_tasks(path: Path) -> list[TaskRecord]:
     tasks: list[TaskRecord] = []
+    seen: dict[str, TaskRecord] = {}
     if not path.exists():
         raise FileNotFoundError(path)
     for line in path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
         payload = json.loads(line)
-        tasks.append(TaskRecord(**payload))
+        task = TaskRecord(**payload)
+        identifier = task_identifier(task)
+        normalized = replace(task, token_budget=0)
+        if identifier in seen:
+            if seen[identifier] != normalized:
+                raise ValueError("Conflicting task metadata for the same mutation")
+            continue
+        seen[identifier] = normalized
+        tasks.append(task)
     return tasks
 
 
@@ -40,7 +53,8 @@ def build_query(task: TaskRecord, query_type: str) -> str:
         )
     if query_type == "vague":
         return (
-            f"There is a {task.mutation_type} bug near {task.bug_location.split(':', maxsplit=1)[0]}. "
+            f"There is a {task.mutation_type} bug near "
+            f"{task.bug_location.split(':', maxsplit=1)[0]}. "
             "Find the relevant context and repair it."
         )
     if query_type == "dev_report":
@@ -66,73 +80,144 @@ def get_repair_client(dry_run: bool, model: str) -> RepairClient:
     return OpenAIRepairClient(model=model)
 
 
-def run_benchmark(args: argparse.Namespace) -> Path:
+def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None = None) -> Path:
     tasks = load_tasks(Path(args.tasks_file))
+    if not tasks:
+        raise ValueError(
+            "Task manifest is empty; generate the offline fixture or supply validated tasks"
+        )
     methods = parse_csv_strings(args.methods)
-    invalid = sorted(set(methods) - set(available_methods()))
-    if invalid:
-        raise ValueError(f"Unsupported methods requested: {', '.join(invalid)}")
+    if not methods or set(methods) - set(available_methods()):
+        raise ValueError("Specify at least one supported retrieval method")
     budgets = parse_csv_ints(args.budgets)
+    if not budgets or any(b < 0 for b in budgets):
+        raise ValueError("budgets must be non-negative integers")
     query_types = parse_csv_strings(args.query_types)
+    if not query_types or set(query_types) - {"exact", "vague", "dev_report"}:
+        raise ValueError("Unsupported query type")
+    scored = not (args.skip_eval or args.dry_run)
+    if scored and not args.allow_local_execution:
+        raise ValueError(
+            "Scoring executes source code locally; use --allow-local-execution "
+            "only for trusted repositories"
+        )
+    if scored and any(not task.test_command for task in tasks):
+        raise ValueError("Every scored task needs a behavioral test_command")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
-    repair_client = get_repair_client(args.dry_run, args.model)
-
-    graph_cache: dict[tuple[str, str], CodebaseGraph] = {}
+    repair_client = repair_client or get_repair_client(args.dry_run, args.model)
+    base = Path(args.repos_dir).resolve()
     with results_path.open("w", encoding="utf-8") as handle:
         for task in tasks:
-            repo_root = Path(args.repos_dir) / task.repo
-            graph_key = (task.repo, task.commit)
-            if graph_key not in graph_cache:
-                graph_cache[graph_key] = CodebaseGraph.from_repo(repo_root)
-            graph = graph_cache[graph_key]
-            task_id = task_identifier(task)
-            for query_type in query_types:
-                query = build_query(task, query_type)
-                for budget in budgets:
-                    for method in methods:
-                        assembled = assemble_context(
-                            graph=graph,
-                            query=query,
-                            method=method,
-                            budget=budget,
-                            bug_location=task.bug_location,
-                            alpha=args.alpha,
+            repo_root = (base / task.repo).resolve()
+            if not repo_root.is_relative_to(base) or repo_root == base:
+                raise ValueError("task.repo must point inside repos_dir")
+            with repo_snapshot(repo_root, task.commit) as snapshot:
+                resolved_commit = subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=snapshot, text=True
+                ).strip()
+                if scored:
+                    baseline = run_test_command(snapshot, task.test_command, args.test_timeout)
+                    if baseline[0] != 0:
+                        raise ValueError(
+                            f"Original baseline failed for {task_identifier(task)}: {baseline[2]}"
                         )
-                        prompt = build_prompt(task, query, assembled.assembled_context.render())
-                        response = repair_client.generate_patch(prompt)
-                        if args.skip_eval:
-                            compiled = args.dry_run
-                            tests_passed = args.dry_run
-                            pass_at_1 = args.dry_run
-                            metadata = {"mode": "skip_eval"}
-                        else:
-                            snapshot = prepare_repo_snapshot(repo_root, task.commit)
-                            evaluation = evaluate_patch(snapshot, task, response)
-                            compiled = evaluation.compiled
-                            tests_passed = evaluation.tests_passed
-                            pass_at_1 = evaluation.pass_at_1
-                            metadata = evaluation.metadata
-                        result = BenchmarkResult(
-                            repo=task.repo,
-                            commit=task.commit,
-                            task_id=task_id,
-                            method=method,
-                            budget=budget,
-                            query_type=query_type,
-                            pass_at_1=pass_at_1,
-                            compiled=compiled,
-                            tests_passed=tests_passed,
-                            context_tokens=assembled.assembled_context.total_tokens,
-                            selected_node_ids=assembled.selected_node_ids,
-                            metadata={
-                                **metadata,
-                                "bug_location": task.bug_location,
-                                "mutation_type": task.mutation_type,
-                            },
+                apply_mutation(snapshot, task)
+                if scored:
+                    mutant = run_test_command(snapshot, task.test_command, args.test_timeout)
+                    if mutant[0] != 1:
+                        raise ValueError(
+                            "Mutation must fail assertions (exit 1), not pass or fail setup"
                         )
-                        handle.write(json.dumps(result.to_json()) + "\n")
+                graph = CodebaseGraph.from_repo(snapshot)
+                for query_type in query_types:
+                    query = build_query(task, query_type)
+                    for budget in budgets:
+                        for method in methods:
+                            oracle_location = args.oracle_location or method == "target_file"
+                            assembled = assemble_context(
+                                graph,
+                                query,
+                                method,
+                                budget,
+                                task.bug_location if oracle_location else None,
+                                args.alpha,
+                            )
+                            prompt = build_prompt(task, query, assembled.context.render())
+                            response = repair_client.generate_patch(prompt)
+                            compiled = tests_passed = pass_at_1 = None
+                            metadata = {
+                                "mode": "dry_run" if args.dry_run else "skip_eval",
+                                "evaluated": False,
+                            }
+                            if scored:
+                                trial = snapshot.parent / "trial"
+                                shutil.copytree(
+                                    snapshot,
+                                    trial,
+                                    symlinks=True,
+                                    ignore=shutil.ignore_patterns("__pycache__"),
+                                )
+                                try:
+                                    evaluation = evaluate_patch(
+                                        trial, task, response, args.test_timeout
+                                    )
+                                finally:
+                                    shutil.rmtree(trial)
+                                compiled, tests_passed, pass_at_1 = (
+                                    evaluation.compiled,
+                                    evaluation.tests_passed,
+                                    evaluation.pass_at_1,
+                                )
+                                metadata = {
+                                    **evaluation.metadata,
+                                    "evaluated": True,
+                                    "mode": "scored",
+                                    "exit_code": evaluation.exit_code,
+                                    "stdout": evaluation.stdout,
+                                    "stderr": evaluation.stderr,
+                                    "baseline_exit_code": baseline[0],
+                                    "mutant_exit_code": mutant[0],
+                                }
+                            result = BenchmarkResult(
+                                repo=task.repo,
+                                commit=resolved_commit,
+                                task_id=task_identifier(task),
+                                method=method,
+                                budget=budget,
+                                query_type=query_type,
+                                pass_at_1=pass_at_1,
+                                compiled=compiled,
+                                tests_passed=tests_passed,
+                                context_tokens=assembled.context.total_tokens,
+                                selected_node_ids=assembled.selected_node_ids,
+                                metadata={
+                                    **metadata,
+                                    "bug_location": task.bug_location,
+                                    "mutation_type": task.mutation_type,
+                                    "oracle_location": oracle_location,
+                                    "oracle_query": query_type == "exact"
+                                    or (query_type == "dev_report" and not task.prompt),
+                                    "model": response.model,
+                                    "alpha": args.alpha,
+                                    "token_codec": "cl100k_base",
+                                    "test_timeout_seconds": args.test_timeout,
+                                    "prompt": asdict(prompt),
+                                    "repair_patch": response.patch_text,
+                                    "task_sha256": hashlib.sha256(
+                                        json.dumps(asdict(task), sort_keys=True).encode()
+                                    ).hexdigest(),
+                                    "prompt_sha256": hashlib.sha256(
+                                        json.dumps(asdict(prompt), sort_keys=True).encode()
+                                    ).hexdigest(),
+                                    "response_sha256": hashlib.sha256(
+                                        response.patch_text.encode()
+                                    ).hexdigest(),
+                                },
+                            )
+                            handle.write(json.dumps(result.to_json()) + "\n")
+                            handle.flush()
     return results_path
 
 
@@ -148,6 +233,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-eval", action="store_true")
+    parser.add_argument("--allow-local-execution", action="store_true")
+    parser.add_argument("--oracle-location", action="store_true")
+    parser.add_argument("--test-timeout", type=float, default=60.0)
     return parser
 
 
@@ -159,4 +247,3 @@ def main(argv: list[str] | None = None) -> Path:
 
 if __name__ == "__main__":
     main()
-

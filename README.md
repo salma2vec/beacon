@@ -1,104 +1,111 @@
 # beacon
 
-Budgeted context assembly for LLM-based code repair under strict token budgets.
+A small, reproducible laboratory for **code-context retrieval under token budgets**.
+Beacon parses a Python repository into a symbol graph, selects context, and evaluates
+single-line mutation repairs against a pinned checkout and behavioral tests.
 
-## Why beacon
-
-`beacon` is for measuring and improving how we choose code context before asking an LLM to repair a bug. It is opinionated about reproducibility, pinned target commits, and budget-aware assembly. It is not a generic agent framework, not a benchmark for arbitrary repositories out of the box, and not a promise that retrieval alone solves code repair.
-
-## Architecture
-
-```text
-Python repository
-    │
-    ▼
-AST parser + symbol extractor
-    │
-    ▼
-cegraph knowledge graph
-    │ nodes: module, class, function, method
-    │ edges: calls, imports, assigns_to, inherits_from, decorates
-    ▼
-retrieval indexes
-    ├─ lexical
-    ├─ semantic
-    └─ graph traversal
-    │
-    ▼
-assembly methods
-    ├─ bm25 / keyword / dense retrieval
-    ├─ BCA ablations
-    └─ greedy submodular selector
-    │
-    ▼
-assembled context (<= token budget)
-    │
-    ▼
-LLM repair
-    │
-    ▼
-compile + test evaluation
-    │
-    ▼
-benchmark reports / router studies / figures
-```
-
-## Installation
+## Run locally
 
 ```bash
-pip install -e ".[dev]"
+python -m pip install -e '.[dev]'
+python -m pytest -q
+python -m examples.offline_benchmark --output /tmp/beacon-control
 ```
 
-## Quickstart
+The offline example creates a tiny Git repository, proves its original tests pass,
+introduces a failing mutation, and evaluates a known correct repair across retrieval
+methods and budgets. It needs no API key. Its results are **harness controls**, not
+LLM scores or evidence that one retrieval method is better.
+
+## Library
 
 ```python
 from pathlib import Path
+from cegraph import CodebaseGraph, assemble_context
 
-from cegraph import CodebaseGraph
-
-graph = CodebaseGraph.from_repo(Path("example_repo"))
-summary = graph.summary()
-
-print(summary.node_count)
-print(summary.edge_count)
+graph = CodebaseGraph.from_repo(Path("your_python_repo"))
+result = assemble_context(graph, "Where is retry delay computed?", "bm25", budget=2000)
+print(result.context.render())
+assert result.context.total_tokens <= 2000
 ```
 
-## API Reference
+The budget includes every rendered context header and separator, measured using
+`tiktoken`'s `cl100k_base`. It excludes the system prompt, issue query and model output;
+it is not a promise about another model's tokenizer. Tiktoken may download its codec
+on first use.
 
-Core entrypoints live in `src/cegraph/`:
+## Retrieval methods
 
-- `CodebaseGraph.from_repo(path: Path) -> CodebaseGraph`
-- `CodebaseGraph.graph_neighbors(node_id: str, depth: int) -> list[tuple[str, int]]`
-- `CodebaseGraph.semantic_neighbors(query_embedding: list[float], k: int) -> list[tuple[str, float]]`
-- `CodebaseGraph.token_count(node_id: str) -> int`
-- `assemble_context(...) -> AssembledContext`
+| Method | Implementation |
+| --- | --- |
+| `no_retrieval` | Empty context control |
+| `bm25` | BM25 ranking with ordered, budget-constrained inclusion |
+| `keyword_map` | Lexical token-overlap ranking |
+| `vector`, `embedding` | Aliases for deterministic 96-dimensional signed token hashing; **not pretrained semantic embeddings** |
+| `bca`, `bca_d1`, `bca_d5` | Lexical seeds, graph closure, hashed similarity and greedy coverage selection; depths 2, 1, 5 |
+| `bca_no_closure` | Seed-only ablation |
+| `bca_no_scoring` | Fixed-seed shuffled graph candidates |
+| `target_file` | Explicit oracle file-location control |
 
-## Benchmark
+Nodes represent modules, classes, functions and methods. AST-derived edges represent
+calls, imports, assignments, inheritance and decorators. Dynamic Python dispatch is
+not fully resolved. Overlapping module and function snippets can consume budget;
+this is a baseline implementation, not a learned retriever.
 
-The benchmark runner will live in `paper/experiments/benchmark.py` and supports:
+## Repair experiments
+
+Supply a JSONL manifest with one task per row: `repo`, `commit`, `bug_location`
+(`path.py:line`), `mutation_type`, `original_line`, `mutated_line`, `token_budget`,
+and a `test_command`. Use an immutable commit hash and an argv-style test command,
+for example `python -m pytest -q tests/test_retry.py`; shell pipelines are not supported.
+The bundled `eval_tasks_full.jsonl` is intentionally empty: there is no released
+large-scale validated task corpus or measured LLM benchmark in this repository.
 
 ```bash
-python paper/experiments/benchmark.py \
-  --tasks-file paper/experiments/eval_tasks_full.jsonl \
-  --repos-dir /path/to/repos \
-  --budgets 2000,4000,8000,10000 \
-  --methods no_retrieval,bm25,vector,embedding,keyword_map,bca_d1,bca,bca_d5,bca_no_closure,bca_no_scoring,target_file \
-  --query-types exact,vague,dev_report \
-  --output-dir paper/results/my_run
+python -m paper.experiments.benchmark \
+  --tasks-file /path/to/tasks.jsonl --repos-dir /path/to/repos \
+  --budgets 2000,4000 --methods no_retrieval,bm25,bca \
+  --query-types vague --output-dir /tmp/beacon-dry --dry-run
 ```
 
-## Extending
+Dry runs assemble context without invoking an API or executing repository code, and
+write `null` scores. Reports exclude these rows. `--skip-eval` also produces null
+scores but can still invoke a configured model; use `--dry-run` for offline work.
 
-- Add a retrieval or assembly method in `src/cegraph/methods.py`
-- Add a scorer or optimizer in `src/cegraph/optimize.py`
-- Add benchmark tasks in `paper/experiments/eval_tasks_full.jsonl`
-- Add new target repositories by pinning commits and setup instructions
+For scored experiments, omit `--dry-run` and explicitly add
+`--allow-local-execution`. This runs the repository **and the generated repair** with
+your user's filesystem and network permissions. Use a disposable external container
+for untrusted code. Subprocesses have a credential-free environment, temporary home,
+60-second default timeout and 1 MiB captured-output limit; these are not a sandbox.
+The OpenAI adapter requires an API key and can incur API charges.
 
-## Current scope
+Each scored task must pass tests before mutation and fail them after mutation.
+Retrieval sees the mutated pinned snapshot, never the caller's working tree. Every
+repair starts from a fresh copy. Only the task's declared Python source file may be
+patched; test-file, symlink, mode-change and escaping-path edits are rejected. A
+missing test command, timeout, invalid patch or failing test cannot score as a pass.
+Test command quality remains the experiment author's responsibility.
 
-Current scope is Python source, controlled single-line mutations, and pass@1 evaluation under token budgets. It does not claim to solve multi-file repair generally, remove the need for strong prompts, or establish universal retrieval rankings outside the included task distributions.
+`exact` queries reveal the original line and are oracle controls. The fallback
+`dev_report` does too; supply a real report in `prompt` to avoid this. `vague` queries
+include the target filename but not the repair. BCA receives no oracle line unless
+`--oracle-location` is supplied. Output metadata records these conditions, the actual
+commit, task/prompt/response hashes, raw prompt/repair, model name, selection settings
+and baseline/mutant results. Treat experiment outputs as source-bearing artifacts.
 
-## License
+## Research context and limits
 
-MIT
+[Agent Retrieval Bench (Qin & Xie, 2026)](https://arxiv.org/abs/2607.24882)
+separates repository retrieval from downstream repair and evaluates frozen commits
+and no-gold controls. Beacon adopts frozen-snapshot evaluation; it does not reproduce
+that benchmark or its selective-retrieval tests.
+[SWE-bench (Jimenez et al.)](https://arxiv.org/abs/2310.06770) evaluates real repository
+issues; Beacon currently studies controlled single-line mutations, a narrower task.
 
+The posthoc router report is an **in-sample oracle upper bound**, not a trained router
+or held-out performance claim. Comparisons need paired tasks, appropriate query
+controls, a strong test suite and held-out repositories before research conclusions.
+Runtime repair prompts remain in source because they are part of the reproducible
+experiment. No performance ranking is claimed here.
+
+MIT licensed. See [LICENSE](LICENSE).

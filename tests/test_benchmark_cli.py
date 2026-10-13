@@ -26,7 +26,16 @@ def broken():
     subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True, text=True)
     subprocess.run(["git", "add", "."], cwd=repo_root, check=True, capture_output=True, text=True)
     subprocess.run(
-        ["git", "commit", "-m", "init"],
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-m",
+            "init",
+        ],
         cwd=repo_root,
         check=True,
         capture_output=True,
@@ -45,7 +54,7 @@ def broken():
             {
                 "repo": "demo_repo",
                 "commit": commit,
-                "bug_location": "demo.py:4",
+                "bug_location": "demo.py:5",
                 "mutation_type": "substitution",
                 "original_line": "    return helper()",
                 "mutated_line": "    return unknown()",
@@ -82,6 +91,9 @@ def test_benchmark_cli_and_reports(tmp_path: Path) -> None:
         ]
     )
     assert results_path.exists()
+    assert all(
+        row["pass_at_1"] is None for row in map(json.loads, results_path.read_text().splitlines())
+    )
     assert results_path.read_text(encoding="utf-8").count("\n") == 4
 
     report_paths = report_main(["--run-dir", str(output_dir)])
@@ -91,4 +103,3 @@ def test_benchmark_cli_and_reports(tmp_path: Path) -> None:
     assert report_paths["latex"].exists()
     assert posthoc_path.exists()
     assert router_path.exists()
-

@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
 
-class NodeKind(str, Enum):
+class NodeKind(StrEnum):
     MODULE = "module"
     CLASS = "class"
     FUNCTION = "function"
     METHOD = "method"
 
 
-class EdgeKind(str, Enum):
+class EdgeKind(StrEnum):
     CALLS = "calls"
     IMPORTS = "imports"
     ASSIGNS_TO = "assigns_to"
@@ -171,9 +172,9 @@ class BenchmarkResult:
     method: str
     budget: int
     query_type: str
-    pass_at_1: bool
-    compiled: bool
-    tests_passed: bool
+    pass_at_1: bool | None
+    compiled: bool | None
+    tests_passed: bool | None
     context_tokens: int
     selected_node_ids: list[str]
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -197,12 +198,14 @@ class BenchmarkResult:
 
 def task_identifier(task: TaskRecord) -> str:
     location = task.bug_location.replace("/", "_").replace(":", "_")
-    return f"{task.repo}-{task.commit[:8]}-{location}-{task.mutation_type}"
+    mutation_digest = sha256((task.original_line + "\0" + task.mutated_line).encode()).hexdigest()[
+        :12
+    ]
+    return f"{task.repo}-{task.commit[:8]}-{location}-{task.mutation_type}-{mutation_digest}"
 
 
 def repo_path(base_dir: Path, repo_name: str) -> Path:
     return base_dir / repo_name
-
 
 
 @dataclass(slots=True, frozen=True)

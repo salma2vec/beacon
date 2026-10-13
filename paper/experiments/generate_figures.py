@@ -24,6 +24,8 @@ def load_results(run_dir: Path) -> list[dict[str, object]]:
 def aggregate(results: list[dict[str, object]]) -> dict[tuple[str, str], list[tuple[int, float]]]:
     grouped: dict[tuple[str, str, int], list[int]] = defaultdict(list)
     for row in results:
+        if row["pass_at_1"] is None:
+            continue
         grouped[(str(row["method"]), str(row["query_type"]), int(row["budget"]))].append(
             1 if row["pass_at_1"] else 0
         )
@@ -58,7 +60,9 @@ def main(argv: list[str] | None = None) -> list[Path]:
     for query_type, series in by_query.items():
         figure, axis = plt.subplots(figsize=(8, 5))
         for method, values in sorted(series.items()):
-            axis.plot([budget for budget, _ in values], [score for _, score in values], label=method)
+            axis.plot(
+                [budget for budget, _ in values], [score for _, score in values], label=method
+            )
         axis.set_title(f"Pass@1 vs budget ({query_type})")
         axis.set_xlabel("Token budget")
         axis.set_ylabel("Pass@1")
@@ -73,4 +77,3 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
 if __name__ == "__main__":
     main()
-

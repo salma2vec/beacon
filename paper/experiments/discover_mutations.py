@@ -7,6 +7,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from cegraph.evaluation import repo_snapshot
 from cegraph.mutations import build_task_records
 
 
@@ -32,13 +33,15 @@ def main(argv: list[str] | None = None) -> Path:
 
     repo_root = Path(args.repo_root)
     budgets = [int(part) for part in args.budgets.split(",") if part]
-    tasks = build_task_records(
-        repo=args.repo_name,
-        commit=current_commit(repo_root),
-        repo_root=repo_root,
-        budgets=budgets,
-        query_type=args.query_type,
-    )
+    commit = current_commit(repo_root)
+    with repo_snapshot(repo_root, commit) as snapshot:
+        tasks = build_task_records(
+            repo=args.repo_name,
+            commit=commit,
+            repo_root=snapshot,
+            budgets=budgets,
+            query_type=args.query_type,
+        )
     output_path = Path(args.output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
@@ -64,4 +67,3 @@ def main(argv: list[str] | None = None) -> Path:
 
 if __name__ == "__main__":
     main()
-
