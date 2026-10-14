@@ -167,10 +167,25 @@ Test quality remains the experiment author's responsibility. Task authors must
 also exclude test helpers, plugins registered in test
 modules and dynamically registered or aliased plugins from repair targets;
 static checks cannot identify every verifier
-component. These completion
+component. A static import edge from a selected test is not enough to classify its
+target: the same syntax imports ordinary application code and private assertion
+helpers. Beacon therefore does not reject the full test import closure; an
+independent operator-owned editable-source policy is still required for adversarial
+manifests. These completion
 checks are not tamper-proof: adversarial code in the pytest process can forge
 reports or interfere with the runner. Strong adversarial evaluation requires an
 external sandbox and independently protected test instrumentation.
+
+For new format experiments, `grounded_line_span_contract` renders the selected
+indexed nodes as full, numbered source lines with each file's indexed-text SHA-256.
+`LineSpanEditRepairClient` accepts one inclusive
+`path`/`start_line`/`end_line`/`replacement` edit only when the range is wholly
+inside one rendered span and the compiler source still matches that hash. It also
+records an explicit `{"abstain":true}` response without turning it into an error.
+The earlier `path`/`search`/`replace` interface remains available for reproducing
+the published pilots. Line-number prefixes and the line-span system prompt must be
+included in any future frozen prompt-budget accounting; this interface has only
+deterministic format controls so far, not repair-rate evidence.
 
 `exact` queries reveal the original line and are oracle controls. The fallback
 `dev_report` does too; supply a real report in `prompt` to avoid this. `vague` queries
