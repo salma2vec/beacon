@@ -1,0 +1,85 @@
+{
+  "kind": "exposed_task_paired_edit_format_diagnosis",
+  "source_head": "ea20ab011c9161c19b6661d575ca4106f8dfa544",
+  "source_sha256": {
+    "examples/edit_format_pilot.py": "e0715e1f9da858aa19f8da57337d48626400022ad8a9f96070a1c2c749f7bf5e",
+    "examples/public_repo_benchmark.py": "7971fb4f3c1a90106c786b413a43d040fc62d1a189c273af74e9fab8e9347c21",
+    "src/cegraph/edits.py": "fc506e943ee0b40265c4149332adbad05157d30c84dc6317d4d88f178265e08b",
+    "src/cegraph/llm.py": "a5601fec4ded5c0e1207c7edb85a31c3bb113568919924f767c7e314a8813f32",
+    "src/cegraph/evaluation.py": "685243b34df404ea0ec917a71ac64ecb1b60bc8563726a02dc6a071a041e94f7",
+    "src/cegraph/methods.py": "52b0d5457a9f31dc2414c5a498ebab0c783a87c931d1b233ac1c87091f6f97c0",
+    "src/cegraph/graph.py": "34d4cb84c6c34373fae20ec133e0148a5d187c66b3ade95cd800be91a95c4a71",
+    "src/cegraph/parser.py": "8ba375097e9928bdf9013f635f98aff979371f9bbc8b32b9b2d7b638465d9280",
+    "src/cegraph/index.py": "c815f18f7025f8a14719a0af1268b4bab1b8d09ff40a94520406094bd17c793a",
+    "src/cegraph/optimize.py": "7bee5fb320421d0fc9d0a05fc74432b85bc32d12a0a896c13043225aace2d49e",
+    "src/cegraph/models.py": "497353ce2cb65e94609259cf53fb7a8e161e058baa9c48e764af224fe1d27193",
+    "src/cegraph/tokens.py": "c88ff0b6a28376f1d84d17d0e81f43890149a9d3820e99e905838ab8e36311c4",
+    "paper/experiments/benchmark.py": "f0be9484f45d47c8effb8fd16762dcc8d8ba9a82edc714bf193508d1f0d7fd47",
+    "examples/results/edit-format-pilot/PROTOCOL.md": "a9cae2d48072fef86d9404eff26736a6c953e3b53b709eb20dbde92798e9702f"
+  },
+  "manifest_sha256": "555bf3cff6f678ff5a96649e4e3a1f9bc91e875e133773f2bff6df7e576e2716",
+  "python": "3.14.2",
+  "versions": {
+    "beacon": "0.1.0",
+    "pytest": "9.1.1",
+    "tiktoken": "0.14.0",
+    "tokenizers": "0.23.3"
+  },
+  "model": "qwen2.5-coder:1.5b",
+  "expected_digest": "d7372fd828518a4d38b1eb196c673c31a85f2ed302b3d1e406c4c2d1b64a0668",
+  "methods": [
+    "bm25",
+    "bca"
+  ],
+  "budgets": [
+    256,
+    1024
+  ],
+  "formats": [
+    "diff",
+    "exact_edit"
+  ],
+  "seed": 42,
+  "temperature": 0,
+  "num_ctx": 4096,
+  "num_predict": 512,
+  "timeout_seconds": 60,
+  "maximum_attempts": 24,
+  "retries": 0,
+  "edit_schema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "maxLength": 512
+      },
+      "search": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 8192
+      },
+      "replace": {
+        "type": "string",
+        "maxLength": 8192
+      }
+    },
+    "required": [
+      "path",
+      "search",
+      "replace"
+    ],
+    "additionalProperties": false
+  },
+  "challenge_sha256": {
+    "boltons/mathutils.py": "bbfa898062884f336135f6d464c8d213ee427e5f6896d25b2ee51a90a4339825",
+    "boltons/iterutils.py": "5a1de84717ff7bfaec421698a880ec38f8469afee4a7ee8e9e33026592988ba6",
+    "boltons/strutils.py": "9a75cda182327c2112a28b5d5caed290e1531f9a4e939cf06368da4806341906"
+  },
+  "controls_only": false,
+  "limits": [
+    "Three previously exposed mutations; diagnostic, not heldout.",
+    "Single small model, one seed; no retrieval superiority or generalization claim.",
+    "Local trusted host, not authenticated inference or an execution sandbox.",
+    "Explicit pytest9 collection-hook migration; original assertions unchanged."
+  ]
+}

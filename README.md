@@ -28,6 +28,14 @@ controls and an actual local-model trial. It keeps model failures, prompt/respon
 records, target-span coverage and native tokenizer checks. This small, hand-selected
 pilot is not a held-out real-issue benchmark or evidence of a retrieval advantage.
 
+A [paired edit-format follow-up](examples/results/edit-format-pilot/README.md)
+adds a strict exact-edit interface and records both failures and the first tested
+model repair. Qwen 0.5B repaired 0/24 conditions; Qwen 1.5B repaired 1/24, including
+0/12 diff and 1/12 exact-edit attempts. The successful clamp edit passed additional
+behavior probes. This establishes a working path, not reliable repair or a BCA
+advantage. A timeout and the separately completed disk-interrupted condition remain
+in the evidence.
+
 ## Library
 
 ```python

@@ -1,0 +1,17 @@
+{
+  "kind": "one_unattempted_cell_recovery",
+  "retries": 0,
+  "reason": "Original run stopped before cell24 under its 2GiB disk-headroom gate.",
+  "parent_protocol_sha256": "7e865a7a6b4e388a8e71d9ccffd901aff9f8988e41bb1aaa0236fe48d570a742",
+  "parent_results_sha256": "88e7f5409c655fa3e1f693108c01c3a03a4ef747c4a57222ea6460bb840cdc20",
+  "original_source_head": "ea20ab011c9161c19b6661d575ca4106f8dfa544",
+  "recovery_source_head": "58efad09c10530f34dada391586f1ba20461ca23",
+  "executor_sha256": "a24c6e01273b19abe79e96adb699944c7d58dfa87846b566afb09bd3ba4cc32b",
+  "cell": [
+    "boltons-c23dbdad-boltons_strutils.py_704-single_line-ea5566886e64",
+    "bca",
+    1024,
+    "exact_edit"
+  ],
+  "complete": true
+}

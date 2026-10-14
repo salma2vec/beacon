@@ -1,0 +1,19 @@
+{
+  "planned_cells": 24,
+  "attempted_cells": 24,
+  "recovered_cells": 1,
+  "formats": {
+    "diff": {
+      "attempts": 12,
+      "passes": 0,
+      "errors": 1
+    },
+    "exact_edit": {
+      "attempts": 12,
+      "passes": 1,
+      "errors": 0
+    }
+  },
+  "complete": true,
+  "limits": "Exposed-task diagnosis across two process windows; no retrieval superiority claim."
+}

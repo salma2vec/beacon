@@ -1,0 +1,45 @@
+{
+  "attempts": 24,
+  "passes": 1,
+  "timeouts": 1,
+  "native_prompt_verified": 23,
+  "recovered_unattempted_cells": 1,
+  "formats": {
+    "diff": {
+      "attempts": 12,
+      "passes": 0,
+      "compiled": 0,
+      "stop_reasons": {
+        "no_received_response": 1,
+        "stop": 8,
+        "length": 3
+      },
+      "edit_errors": {
+        "none": 12
+      }
+    },
+    "exact_edit": {
+      "attempts": 12,
+      "passes": 1,
+      "compiled": 2,
+      "stop_reasons": {
+        "stop": 12
+      },
+      "edit_errors": {
+        "Edit path must name an authorized Python source file": 7,
+        "none": 2,
+        "Search text must match exactly once": 2,
+        "Edit produces invalid Python": 1
+      }
+    }
+  },
+  "passing_conditions": [
+    {
+      "task_id": "boltons-c23dbdad-boltons_mathutils.py_69-single_line-47d96fb8cf1a",
+      "method": "bm25",
+      "budget": 1024,
+      "format": "exact_edit"
+    }
+  ],
+  "combined_jsonl_sha256": "135e9b708c35ddf5a129f431de7d76e525297e2019d9ee7893b0a0f69057142f"
+}
