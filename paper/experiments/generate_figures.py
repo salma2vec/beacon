@@ -7,6 +7,11 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+if __package__:
+    from .safe_output import atomic_output, figure_filename, write_text_atomic
+else:  # Retain direct `python paper/experiments/generate_figures.py` usage.
+    from safe_output import atomic_output, figure_filename, write_text_atomic
+
 try:
     import matplotlib.pyplot as plt
 except ImportError:  # pragma: no cover - optional
@@ -43,6 +48,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
     args = parser.parse_args(argv)
     run_dir = Path(args.run_dir)
     aggregated = aggregate(load_results(run_dir))
+    filenames = {query_type: figure_filename(query_type) for _, query_type in aggregated}
     outputs: list[Path] = []
     if plt is None:
         fallback = run_dir / "figures.tsv"
@@ -50,7 +56,7 @@ def main(argv: list[str] | None = None) -> list[Path]:
         for (method, query_type), values in aggregated.items():
             for budget, score in values:
                 lines.append(f"{method}\t{query_type}\t{budget}\t{score:.3f}")
-        fallback.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        write_text_atomic(fallback, "\n".join(lines) + "\n")
         return [fallback]
 
     by_query: dict[str, dict[str, list[tuple[int, float]]]] = defaultdict(dict)
@@ -59,18 +65,21 @@ def main(argv: list[str] | None = None) -> list[Path]:
 
     for query_type, series in by_query.items():
         figure, axis = plt.subplots(figsize=(8, 5))
-        for method, values in sorted(series.items()):
-            axis.plot(
-                [budget for budget, _ in values], [score for _, score in values], label=method
-            )
-        axis.set_title(f"Pass@1 vs budget ({query_type})")
-        axis.set_xlabel("Token budget")
-        axis.set_ylabel("Pass@1")
-        axis.legend(fontsize="small", ncol=2)
-        output_path = run_dir / f"figure_{query_type}.png"
-        figure.tight_layout()
-        figure.savefig(output_path)
-        plt.close(figure)
+        try:
+            for method, values in sorted(series.items()):
+                axis.plot(
+                    [budget for budget, _ in values], [score for _, score in values], label=method
+                )
+            axis.set_title(f"Pass@1 vs budget ({query_type})")
+            axis.set_xlabel("Token budget")
+            axis.set_ylabel("Pass@1")
+            axis.legend(fontsize="small", ncol=2)
+            output_path = run_dir / filenames[query_type]
+            figure.tight_layout()
+            with atomic_output(output_path) as handle:
+                figure.savefig(handle, format="png")
+        finally:
+            plt.close(figure)
         outputs.append(output_path)
     return outputs
 

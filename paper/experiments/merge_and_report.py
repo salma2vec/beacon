@@ -7,6 +7,11 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+if __package__:
+    from .safe_output import write_text_atomic
+else:  # Retain direct script usage as well as `python -m`.
+    from safe_output import write_text_atomic
+
 
 def load_results(run_dir: Path) -> list[dict[str, object]]:
     return [
@@ -53,8 +58,8 @@ def main(argv: list[str] | None = None) -> dict[str, Path]:
     latex = build_latex_table(aggregates)
     markdown_path = run_dir / "report.md"
     latex_path = run_dir / "report.tex"
-    markdown_path.write_text(markdown + "\n", encoding="utf-8")
-    latex_path.write_text(latex + "\n", encoding="utf-8")
+    write_text_atomic(markdown_path, markdown + "\n")
+    write_text_atomic(latex_path, latex + "\n")
     return {"markdown": markdown_path, "latex": latex_path}
 
 

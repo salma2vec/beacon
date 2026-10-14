@@ -7,6 +7,11 @@ import json
 from collections import defaultdict
 from pathlib import Path
 
+if __package__:
+    from .safe_output import write_text_atomic
+else:  # Retain direct script usage as well as `python -m`.
+    from safe_output import write_text_atomic
+
 
 def load_results(run_dir: Path) -> list[dict[str, object]]:
     return [
@@ -79,7 +84,7 @@ def main(argv: list[str] | None = None) -> Path:
     run_dir = Path(args.run_dir)
     summary = summarize_router_study(load_results(run_dir))
     output_path = run_dir / "posthoc_analysis.json"
-    output_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    write_text_atomic(output_path, json.dumps(summary, indent=2) + "\n")
     return output_path
 
 
