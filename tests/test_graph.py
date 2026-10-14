@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+import pytest
+
 from cegraph.graph import CodebaseGraph
+from cegraph.parser import parse_python_file
 
 
 def write_repo(tmp_path: Path) -> Path:
@@ -55,3 +59,22 @@ def test_graph_neighbors_and_nearest_node(tmp_path: Path) -> None:
     neighbors = graph.graph_neighbors(node_id, depth=2)
     assert neighbors
     assert all(hop_count >= 1 for _, hop_count in neighbors)
+
+
+def test_parser_rejects_source_swapped_to_symlink_before_open(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.py"
+    outside = tmp_path / "outside.py"
+    source.write_text("value = 1\n")
+    outside.write_text("value = 2\n")
+    real_open = os.open
+
+    def swap_then_open(path, flags):
+        source.unlink()
+        source.symlink_to(outside)
+        return real_open(path, flags)
+
+    monkeypatch.setattr("cegraph.parser.os.open", swap_then_open)
+    with pytest.raises(ValueError, match="changed or became unsafe"):
+        parse_python_file(tmp_path, source)

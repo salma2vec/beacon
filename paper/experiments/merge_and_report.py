@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -31,11 +32,40 @@ def aggregate_pass_rates(results: list[dict[str, object]]) -> dict[tuple[str, in
     return {key: sum(values) / len(values) for key, values in grouped.items()}
 
 
+def _markdown_cell(value: str) -> str:
+    return (
+        html.escape(value, quote=True)
+        .replace("\\", "\\\\")
+        .replace("|", "\\|")
+        .replace("\r", "&#13;")
+        .replace("\n", "&#10;")
+    )
+
+
+def _latex_cell(value: str) -> str:
+    escaped = {
+        "\\": r"\textbackslash{}",
+        "{": r"\{",
+        "}": r"\}",
+        "$": r"\$",
+        "&": r"\&",
+        "#": r"\#",
+        "_": r"\_",
+        "%": r"\%",
+        "^": r"\textasciicircum{}",
+        "~": r"\textasciitilde{}",
+    }
+    return "".join(escaped.get(char, " " if char in "\r\n" else char) for char in value)
+
+
 def build_markdown_table(aggregates: dict[tuple[str, int, str], float]) -> str:
     rows = ["| method | budget | query_type | pass@1 |", "|---|---:|---|---:|"]
     for key in sorted(aggregates):
         method, budget, query_type = key
-        rows.append(f"| {method} | {budget} | {query_type} | {aggregates[key]:.3f} |")
+        rows.append(
+            f"| {_markdown_cell(method)} | {budget} | {_markdown_cell(query_type)} | "
+            f"{aggregates[key]:.3f} |"
+        )
     return "\n".join(rows)
 
 
@@ -43,7 +73,10 @@ def build_latex_table(aggregates: dict[tuple[str, int, str], float]) -> str:
     rows = ["\\begin{tabular}{lllr}", "Method & Budget & Query & Pass@1\\\\", "\\hline"]
     for key in sorted(aggregates):
         method, budget, query_type = key
-        rows.append(f"{method} & {budget} & {query_type} & {aggregates[key]:.3f}\\\\")
+        rows.append(
+            f"{_latex_cell(method)} & {budget} & {_latex_cell(query_type)} & "
+            f"{aggregates[key]:.3f}\\\\"
+        )
     rows.append("\\end{tabular}")
     return "\n".join(rows)
 

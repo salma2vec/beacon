@@ -5,10 +5,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
+import stat
 import subprocess
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import TextIO
 
 from cegraph import CodebaseGraph, assemble_context, available_methods
 from cegraph.evaluation import apply_mutation, evaluate_patch, repo_snapshot, run_pytest_tests
@@ -82,6 +85,29 @@ def get_repair_client(dry_run: bool, model: str, provider: str = "openai") -> Re
     return OpenAIRepairClient(model=model)
 
 
+def create_results_file(path: Path) -> TextIO:
+    """Exclusively create a single-link regular result file without following links."""
+    flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_EXCL
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+            raise ValueError("results.jsonl must be a newly created single-link regular file")
+        handle = os.fdopen(descriptor, "w", encoding="utf-8")
+        descriptor = -1
+        return handle
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+            path.unlink(missing_ok=True)
+
+
 def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None = None) -> Path:
     tasks = load_tasks(Path(args.tasks_file))
     if not tasks:
@@ -110,7 +136,7 @@ def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None =
     results_path = output_dir / "results.jsonl"
     repair_client = repair_client or get_repair_client(args.dry_run, args.model, args.provider)
     base = Path(args.repos_dir).resolve()
-    with results_path.open("w", encoding="utf-8") as handle:
+    with create_results_file(results_path) as handle:
         for task in tasks:
             repo_root = (base / task.repo).resolve()
             if not repo_root.is_relative_to(base) or repo_root == base:

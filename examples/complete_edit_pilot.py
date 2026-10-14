@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
+import stat
 import subprocess
 from dataclasses import asdict, replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from cegraph import CodebaseGraph, assemble_context
 from cegraph.edits import EDIT_SCHEMA, EDIT_SYSTEM, ExactEditRepairClient
@@ -29,6 +31,78 @@ from examples.edit_format_pilot import (
 )
 from examples.public_repo_benchmark import MANIFEST, ReferencePatchClient, qwen_counter
 from paper.experiments.benchmark import build_prompt, build_query, load_tasks
+
+
+def _read_regular(path: Path) -> bytes:
+    before = path.lstat()
+    if path.is_symlink() or not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+        raise ValueError(f"Evidence must be a single-link regular file: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_nlink != 1
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError(f"Evidence changed while opening: {path}")
+        with os.fdopen(descriptor, "rb") as handle:
+            descriptor = -1
+            return handle.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+
+
+def verify_parent_evidence(
+    interrupted: Path, parent_manifest: Path, source_root: Path
+) -> dict[str, bytes]:
+    """Verify independently supplied parent identity and exact immutable artifacts."""
+    parent = interrupted.resolve(strict=True)
+    if parent_manifest.is_symlink():
+        raise ValueError("Parent manifest must be a regular file, not a symlink")
+    manifest_resolved = parent_manifest.resolve(strict=True)
+    if manifest_resolved.is_relative_to(parent):
+        raise ValueError("Parent manifest must be supplied outside the parent artifact directory")
+    manifest_bytes = _read_regular(parent_manifest)
+    manifest = json.loads(manifest_bytes)
+    required = {"schema", "parent_directory", "artifacts"}
+    if not isinstance(manifest, dict) or set(manifest) != required:
+        raise ValueError("Invalid parent manifest shape")
+    if manifest["schema"] != "beacon-parent-evidence-v1":
+        raise ValueError("Unsupported parent manifest schema")
+    if manifest["parent_directory"] != str(parent):
+        raise ValueError("Parent manifest identifies a different artifact directory")
+    expected_names = {"protocol.json", "results.jsonl", "controls.jsonl"}
+    artifacts = manifest["artifacts"]
+    if not isinstance(artifacts, dict) or set(artifacts) != expected_names:
+        raise ValueError("Parent manifest must hash every required artifact")
+    verified: dict[str, bytes] = {"parent_manifest": manifest_bytes}
+    for name in sorted(expected_names):
+        data = _read_regular(parent / name)
+        if not isinstance(artifacts[name], str) or digest_bytes(data) != artifacts[name]:
+            raise ValueError(f"Parent artifact digest differs: {name}")
+        verified[name] = data
+
+    protocol = json.loads(verified["protocol.json"])
+    if not isinstance(protocol, dict):
+        raise ValueError("Parent protocol must be a JSON object")
+    source_hashes = protocol.get("source_sha256")
+    if not isinstance(source_hashes, dict):
+        raise ValueError("Parent protocol lacks source hashes")
+    for name, expected in source_hashes.items():
+        if not isinstance(name, str) or not isinstance(expected, str):
+            raise ValueError("Parent source hash entry is invalid")
+        relative = PurePosixPath(name)
+        if relative.is_absolute() or relative.as_posix() != name or ".." in relative.parts:
+            raise ValueError("Parent source hash path must be a contained relative path")
+        source = source_root.joinpath(*relative.parts)
+        if not source.resolve(strict=True).is_relative_to(source_root.resolve(strict=True)):
+            raise ValueError("Parent source hash path escapes the source root")
+        if digest_bytes(_read_regular(source)) != expected:
+            raise ValueError(f"Frozen experiment source changed: {name}")
+    return verified
 
 
 def missing_cell(rows: list[dict], task_ids: list[str]) -> tuple[str, str, int, str]:
@@ -49,17 +123,17 @@ def missing_cell(rows: list[dict], task_ids: list[str]) -> tuple[str, str, int, 
     return (expected - set(observed)).pop()
 
 
-def run(repo: Path, interrupted: Path, output: Path, tokenizer: Path) -> dict:
+def run(
+    repo: Path, interrupted: Path, output: Path, tokenizer: Path, parent_manifest: Path
+) -> dict:
     root = Path(__file__).resolve().parents[1]
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip():
         raise ValueError("Freeze recovery executor before inference")
     if output.exists() or (interrupted / "summary.json").exists():
         raise ValueError("Use fresh output and an incomplete original pilot")
-    protocol = json.loads((interrupted / "protocol.json").read_text())
-    for path, expected in protocol["source_sha256"].items():
-        if digest_bytes((root / path).read_bytes()) != expected:
-            raise ValueError(f"Frozen experiment source changed: {path}")
-    if digest_bytes(MANIFEST.read_bytes()) != protocol["manifest_sha256"]:
+    parent = verify_parent_evidence(interrupted, parent_manifest, root)
+    protocol = json.loads(parent["protocol.json"])
+    if digest_bytes(_read_regular(MANIFEST)) != protocol["manifest_sha256"]:
         raise ValueError("Frozen manifest changed")
     model = protocol["model"]
     if model not in MODELS or protocol["expected_digest"] != MODELS[model]:
@@ -77,7 +151,7 @@ def run(repo: Path, interrupted: Path, output: Path, tokenizer: Path) -> dict:
         }.items()
     ):
         raise ValueError("Recovery only supports the unchanged frozen pilot parameters")
-    rows = [json.loads(line) for line in (interrupted / "results.jsonl").read_text().splitlines()]
+    rows = [json.loads(line) for line in parent["results.jsonl"].decode().splitlines()]
     tasks = load_tasks(MANIFEST)
     task_id, method, budget, fmt = missing_cell(rows, [task_identifier(t) for t in tasks])
     original = next(t for t in tasks if task_identifier(t) == task_id)
@@ -88,8 +162,9 @@ def run(repo: Path, interrupted: Path, output: Path, tokenizer: Path) -> dict:
         "kind": "one_unattempted_cell_recovery",
         "retries": 0,
         "reason": "Original run stopped before cell24 under its 2GiB disk-headroom gate.",
-        "parent_protocol_sha256": digest_bytes((interrupted / "protocol.json").read_bytes()),
-        "parent_results_sha256": digest_bytes((interrupted / "results.jsonl").read_bytes()),
+        "parent_manifest_sha256": digest_bytes(parent["parent_manifest"]),
+        "parent_protocol_sha256": digest_bytes(parent["protocol.json"]),
+        "parent_results_sha256": digest_bytes(parent["results.jsonl"]),
         "original_source_head": protocol["source_head"],
         "recovery_source_head": subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=root, text=True
@@ -120,7 +195,7 @@ def run(repo: Path, interrupted: Path, output: Path, tokenizer: Path) -> dict:
         }
         append_row(output / "controls.jsonl", control)
         old_controls = [
-            json.loads(x) for x in (interrupted / "controls.jsonl").read_text().splitlines()
+            json.loads(x) for x in parent["controls.jsonl"].decode().splitlines()
         ]
         previous = next(c for c in old_controls if c["task_id"] == task_id)
         if not (
@@ -204,8 +279,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("repo", "interrupted", "output", "tokenizer"):
         parser.add_argument("--" + name, type=Path, required=True)
+    parser.add_argument("--parent-manifest", type=Path, required=True)
     parser.add_argument("--allow-local-execution", action="store_true")
     args = parser.parse_args()
     if not args.allow_local_execution:
         parser.error("Explicit local execution acknowledgement is required")
-    print(json.dumps(run(args.repo, args.interrupted, args.output, args.tokenizer), indent=2))
+    print(
+        json.dumps(
+            run(args.repo, args.interrupted, args.output, args.tokenizer, args.parent_manifest),
+            indent=2,
+        )
+    )

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import os
 import re
+import stat
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -258,7 +260,27 @@ class ModuleParser(ast.NodeVisitor):
 def parse_python_file(repo_root: Path, file_path: Path) -> ParsedModule:
     if file_path.is_symlink() or not file_path.resolve().is_relative_to(repo_root.resolve()):
         raise ValueError("Source file must be contained in the repository without symlinks")
-    source = file_path.read_text(encoding="utf-8")
+    before = file_path.lstat()
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("Source file must be a regular file")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(file_path, flags)
+    except OSError as error:
+        raise ValueError("Source file changed or became unsafe before opening") from error
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino)
+        ):
+            raise ValueError("Source file changed or is not a regular file")
+        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+            descriptor = -1
+            source = handle.read()
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
     return ModuleParser(repo_root, file_path, source).parse()
 
 

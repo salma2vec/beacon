@@ -138,6 +138,17 @@ def test_safe_query_labels_keep_existing_filenames(label: str) -> None:
     assert figure_filename(label) == f"figure_{label}.png"
 
 
+def test_report_tables_escape_untrusted_labels() -> None:
+    aggregates = {("<script>|m_#%", 64, "q&$\\\nnext"): 1.0}
+    markdown = merge_and_report.build_markdown_table(aggregates)
+    latex = merge_and_report.build_latex_table(aggregates)
+    assert "<script>" not in markdown
+    assert "&lt;script&gt;\\|m_#%" in markdown
+    assert "q&amp;$\\\\&#10;next" in markdown
+    assert r"<script>|m\_\#\%" in latex
+    assert r"q\&\$\textbackslash{} next" in latex
+
+
 def test_report_serialization_is_unchanged(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = make_run(tmp_path)
     monkeypatch.setattr(generate_figures, "plt", None)

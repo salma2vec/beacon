@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from paper.experiments.benchmark import main as benchmark_main
 from paper.experiments.merge_and_report import main as report_main
@@ -103,3 +106,39 @@ def test_benchmark_cli_and_reports(tmp_path: Path) -> None:
     assert report_paths["latex"].exists()
     assert posthoc_path.exists()
     assert router_path.exists()
+
+
+@pytest.mark.parametrize("kind", ["regular", "symlink", "hardlink"])
+def test_benchmark_refuses_preexisting_results_file(tmp_path: Path, kind: str) -> None:
+    tasks_file = build_repo(tmp_path)
+    output_dir = tmp_path / "results"
+    output_dir.mkdir()
+    destination = output_dir / "results.jsonl"
+    outside = tmp_path / "outside"
+    outside.write_text("unchanged\n")
+    if kind == "regular":
+        destination.write_text("existing\n")
+    elif kind == "symlink":
+        destination.symlink_to(outside)
+    else:
+        os.link(outside, destination)
+    with pytest.raises(FileExistsError):
+        benchmark_main(
+            [
+                "--tasks-file",
+                str(tasks_file),
+                "--repos-dir",
+                str(tmp_path),
+                "--budgets",
+                "64",
+                "--methods",
+                "no_retrieval",
+                "--query-types",
+                "vague",
+                "--output-dir",
+                str(output_dir),
+                "--dry-run",
+                "--skip-eval",
+            ]
+        )
+    assert outside.read_text() == "unchanged\n"
