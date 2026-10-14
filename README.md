@@ -78,6 +78,13 @@ The bundled `eval_tasks_full.jsonl` is intentionally empty: there is no released
 large-scale validated task corpus in this repository. The separate Boltons pilot
 manifest is intentionally limited to three controlled regressions.
 
+Mutation discovery enumerates all candidates within explicit resource limits and
+raises an error before writing the output if any limit is exceeded. Defaults include
+256 KiB per source file, 64 MiB of cumulative syntax-validation input, 10,000 syntax
+checks and 10,000 task records. `python -m paper.experiments.discover_mutations --help`
+lists all configurable limits. Successful task records preserve those limits in
+their metadata; an incomplete prefix is never presented as a complete corpus.
+
 ```bash
 python -m paper.experiments.benchmark \
   --tasks-file /path/to/tasks.jsonl --repos-dir /path/to/repos \
@@ -88,6 +95,10 @@ python -m paper.experiments.benchmark \
 Dry runs assemble context without invoking an API or executing repository code, and
 write `null` scores. Reports exclude these rows. `--skip-eval` also produces null
 scores but can still invoke a configured model; use `--dry-run` for offline work.
+Report writers publish through temporary file handles and atomic replacement, so
+existing output symlinks cannot redirect report bytes. Figure labels cannot contain
+path separators or control characters. The run directory and its ancestors must
+still be trusted against concurrent replacement.
 
 For scored experiments, omit `--dry-run` and explicitly add
 `--allow-local-execution`. This runs the repository **and the generated repair** with
