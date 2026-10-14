@@ -208,6 +208,12 @@ def assemble_context(
             for node_id, score in ranked
         ]
         compact = method in {"compact_bm25", "grounded_bm25"}
+        if method == "grounded_bm25":
+            selection_policy = "exact_query_symbol_then_bm25"
+        elif method == "compact_bm25":
+            selection_policy = "bm25"
+        else:
+            selection_policy = method
         return _chunks_from_selection(
             graph,
             candidates,
@@ -216,9 +222,7 @@ def assemble_context(
             alpha,
             render_format="recoverable_v1" if compact else "verbose_v1",
             result_metadata={
-                "selection_policy": "exact_query_symbol_then_bm25"
-                if method == "grounded_bm25"
-                else "bm25",
+                "selection_policy": selection_policy,
                 "query_anchor_node_ids": anchors,
             },
         )

@@ -55,6 +55,9 @@ def test_target_file_and_keyword_map_return_context(tmp_path: Path) -> None:
     keyword = assemble_context(graph, "helper", "keyword_map", budget=500, bug_location="app.py:1")
     assert target.selected_node_ids
     assert keyword.selected_node_ids
+    assert keyword.metadata["selection_policy"] == "keyword_map"
+    vector = assemble_context(graph, "helper", "vector", budget=500, bug_location="app.py:1")
+    assert vector.metadata["selection_policy"] == "vector"
 
 
 def test_grounded_bm25_reserves_named_symbol_under_tight_budget(tmp_path: Path) -> None:
