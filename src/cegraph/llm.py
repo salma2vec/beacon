@@ -30,6 +30,14 @@ class RepairClient(Protocol):
     def generate_patch(self, prompt: RepairPrompt) -> RepairResponse: ...
 
 
+class OllamaResponseError(ValueError):
+    """A rejected completion retained for failure-inclusive experiment records."""
+
+    def __init__(self, message: str, response: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.response = response
+
+
 class EchoRepairClient:
     """A deterministic fallback client for dry runs and tests."""
 
@@ -76,9 +84,13 @@ class OllamaRepairClient:
         seed: int = 42,
         timeout: float = 180,
         prompt_token_counter: Callable[[RepairPrompt], int] | None = None,
+        response_schema: dict[str, Any] | None = None,
     ) -> None:
         self.model, self.timeout = model, timeout
         self.prompt_token_counter = prompt_token_counter
+        self.response_schema = (
+            json.loads(json.dumps(response_schema)) if response_schema is not None else None
+        )
         self.options = {"seed": seed, "temperature": 0, "num_ctx": 4096, "num_predict": 512}
         self.digest = self._model_digest()
         details = self._request("/api/show", {"model": model})
@@ -130,21 +142,26 @@ class OllamaRepairClient:
                 "stream": False,
                 "options": self.options,
                 "keep_alive": "5m",
+                **({"format": self.response_schema} if self.response_schema is not None else {}),
             },
         )
         message = result.get("message", {})
         content = message.get("content") if isinstance(message, dict) else None
         if result.get("done") is not True or not isinstance(content, str):
-            raise ValueError("Ollama did not return a complete chat response")
+            raise OllamaResponseError("Ollama did not return a complete chat response", result)
         native_count = result.get("prompt_eval_count")
-        if not isinstance(native_count, int) or not 0 < native_count < capacity:
-            raise ValueError("Native prompt count is missing or risks context truncation")
+        if type(native_count) is not int or not 0 < native_count < capacity:
+            raise OllamaResponseError(
+                "Native prompt count is missing or risks context truncation", result
+            )
         if expected_count is not None and native_count != expected_count:
-            raise ValueError("Native prompt count differs from full-prompt tokenizer count")
+            raise OllamaResponseError(
+                "Native prompt count differs from full-prompt tokenizer count", result
+            )
         complete = result.get("done_reason") == "stop"
         # Strip only a surrounding code fence; never repair or retry a failed diff.
         patch = content.strip("\r\n")
-        if patch.startswith("```") and patch.endswith("```"):
+        if self.response_schema is None and patch.startswith("```") and patch.endswith("```"):
             patch = "\n".join(patch.splitlines()[1:-1])
         return RepairResponse(
             patch if complete else "",
@@ -154,6 +171,7 @@ class OllamaRepairClient:
                 "provider": "ollama_loopback",
                 "server_authenticated": False,
                 "model_identity_source": "local_service_self_report",
+                "output_format": "json_schema" if self.response_schema is not None else "diff",
                 "model_digest": self.digest,
                 "runtime_version": self.runtime_version,
                 "options": self.options,

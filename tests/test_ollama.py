@@ -6,7 +6,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from cegraph.llm import OllamaRepairClient
+from cegraph.llm import OllamaRepairClient, OllamaResponseError
 from cegraph.models import RepairPrompt
 
 
@@ -85,8 +85,10 @@ def test_missing_model_never_downloads(monkeypatch):
 def test_native_count_mismatch_and_capacity_fail_closed(monkeypatch):
     monkeypatch.setattr(OllamaRepairClient, "_request", fake_request)
     client = OllamaRepairClient("local:8b", prompt_token_counter=lambda prompt: 12)
-    with pytest.raises(ValueError, match="differs"):
+    with pytest.raises(OllamaResponseError, match="differs") as error:
         client.generate_patch(RepairPrompt("s", "u"))
+    assert error.value.response["prompt_eval_count"] == 11
+    assert error.value.response["message"]["content"].startswith("```diff")
     client.prompt_token_counter = lambda prompt: 4096
     with pytest.raises(ValueError, match="capacity"):
         client.generate_patch(RepairPrompt("s", "u"))
