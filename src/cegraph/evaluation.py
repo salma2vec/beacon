@@ -6,6 +6,8 @@ This module is not an OS sandbox. Run untrusted code in an external container.
 from __future__ import annotations
 
 import ast
+import configparser
+import fnmatch
 import json
 import math
 import os
@@ -17,11 +19,14 @@ import subprocess
 import sys
 import tempfile
 import time
-import xml.etree.ElementTree as ET
+import tomllib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+
+from defusedxml import ElementTree as ET
+from defusedxml.common import DefusedXmlException
 
 from .models import EvaluationResult, RepairResponse, TaskRecord
 
@@ -56,11 +61,62 @@ def task_target(repo_root: Path, task: TaskRecord) -> Path:
         if argument.startswith("-"):
             continue
         selected = repo_root / argument.split("::", 1)[0]
-        if selected.resolve() == target.resolve():
+        selected_resolved = selected.resolve()
+        target_resolved = target.resolve()
+        custom_collected = (
+            selected.is_dir()
+            and target_resolved.is_relative_to(selected_resolved)
+            and any(
+                fnmatch.fnmatchcase(target.name, pattern)
+                for pattern in _pytest_python_file_patterns(repo_root)
+            )
+        )
+        if selected_resolved == target_resolved or custom_collected:
             raise ValueError("Task target cannot modify explicitly selected evaluation tests")
     if _contains_pytest_hooks(target) or target.resolve() in _local_pytest_plugins(repo_root):
         raise ValueError("Task target cannot modify pytest verifier hooks or plugins")
     return target
+
+
+def _pytest_python_file_patterns(repo_root: Path) -> set[str]:
+    """Read literal root-level pytest collection patterns conservatively."""
+    patterns = {"test_*.py", "*_test.py"}
+    pyproject = repo_root / "pyproject.toml"
+    if pyproject.is_file():
+        try:
+            data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+        except (OSError, tomllib.TOMLDecodeError) as error:
+            raise ValueError("Pytest configuration cannot be inspected") from error
+        try:
+            value = (
+                data.get("tool", {})
+                .get("pytest", {})
+                .get("ini_options", {})
+                .get("python_files")
+            )
+        except AttributeError as error:
+            raise ValueError("Pytest configuration cannot be inspected") from error
+        if isinstance(value, str):
+            patterns.update(value.split())
+        elif isinstance(value, list) and all(isinstance(item, str) for item in value):
+            patterns.update(value)
+
+    for filename, section in (
+        ("pytest.ini", "pytest"),
+        ("tox.ini", "pytest"),
+        ("setup.cfg", "tool:pytest"),
+    ):
+        config_path = repo_root / filename
+        if not config_path.is_file():
+            continue
+        parser = configparser.ConfigParser(interpolation=None)
+        try:
+            parser.read(config_path, encoding="utf-8")
+        except (OSError, configparser.Error) as error:
+            raise ValueError("Pytest configuration cannot be inspected") from error
+        if parser.has_option(section, "python_files"):
+            patterns.update(parser.get(section, "python_files").split())
+    return patterns
 
 
 def _contains_pytest_hooks(path: Path) -> bool:
@@ -386,6 +442,8 @@ def run_pytest_tests(
             if report.stat().st_size > 4_194_304:
                 raise ValueError("pytest completion report exceeds size limit")
             root = ET.parse(report).getroot()
+            if root is None:
+                raise ValueError("Invalid pytest completion report structure")
             suites = root.findall("testsuite")
             if root.tag != "testsuites" or len(suites) != 1:
                 raise ValueError("Invalid pytest completion report structure")
@@ -415,7 +473,7 @@ def run_pytest_tests(
             if required_test_ids is not None and ids != required_test_ids:
                 raise ValueError("pytest completed test IDs differ from the original baseline")
             return PytestRun(code, stdout, stderr, True, frozenset(ids), frozenset(failed))
-        except (OSError, ValueError, KeyError, ET.ParseError) as error:
+        except (OSError, ValueError, KeyError, ET.ParseError, DefusedXmlException) as error:
             reason = str(error)
             return PytestRun(code, stdout, stderr + "\n" + reason, reason=reason)
 

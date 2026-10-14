@@ -157,12 +157,14 @@ Retrieval sees the mutated pinned snapshot, never the caller's working tree. Eve
 repair starts from a fresh copy. Only the task's declared Python source file may be
 patched; conventional test filenames/directories, `conftest.py`, files explicitly
 selected by the pytest command, named pytest hooks, local plugins registered by
-literal `pytest_plugins` assignments in `conftest.py`, symlinks, mode changes and escaping paths are
-rejected. Syntax checks compile in memory and never
+literal `pytest_plugins` assignments in `conftest.py`, and files matching literal
+root-level `python_files` collection patterns under selected test directories are
+rejected, along with symlinks, mode changes and escaping paths. Syntax checks
+compile in memory and never
 write through repository-controlled bytecode-cache paths. A
 missing test command, timeout, invalid patch or failing test cannot score as a pass.
 Test quality remains the experiment author's responsibility. Task authors must
-also exclude custom-collected tests, test helpers, plugins registered in test
+also exclude test helpers, plugins registered in test
 modules and dynamically registered or aliased plugins from repair targets;
 static checks cannot identify every verifier
 component. These completion

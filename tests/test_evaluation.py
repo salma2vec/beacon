@@ -87,7 +87,7 @@ def response(path: str, content: str) -> RepairResponse:
 
 
 @pytest.mark.parametrize(
-    "path", ["../outside.py", "/tmp/outside.py", ".git/config", "test_calc.py"]
+    "path", ["../outside.py", "/outside.py", ".git/config", "test_calc.py"]
 )
 def test_patch_rejects_other_paths(tmp_path: Path, path: str) -> None:
     root, task = fixture_repo(tmp_path)
@@ -301,6 +301,30 @@ def test_missing_report_even_after_exit_zero_cannot_complete(
     assert "report is missing" in result.reason
 
 
+def test_completion_report_rejects_dtd_entities(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import cegraph.evaluation as evaluation
+
+    root, task = fixture_repo(tmp_path)
+
+    def forged_report(_root: Path, command: str, *_args: object) -> tuple[int, str, str]:
+        arguments = shlex.split(command)
+        report = Path(arguments[arguments.index("--junitxml") + 1])
+        report.write_text(
+            "<!DOCTYPE testsuites [<!ENTITY forged 'test_required'>]>\n"
+            '<testsuites><testsuite tests="1" failures="0" errors="0" skipped="0">'
+            '<testcase classname="checks" name="&forged;" />'
+            "</testsuite></testsuites>\n"
+        )
+        return 0, "", ""
+
+    monkeypatch.setattr(evaluation, "run_test_command", forged_report)
+    result = run_pytest_tests(root, task.test_command)
+    assert not result.completed
+    assert "EntitiesForbidden" in result.reason
+
+
 def test_evaluation_requires_trusted_original_test_ids(tmp_path: Path) -> None:
     root, task = fixture_repo(tmp_path)
     result = evaluate_patch(root, task, response("calc.py", "import sys\nsys.exit(0)\n"))
@@ -368,6 +392,39 @@ def test_task_cannot_edit_explicitly_selected_test_with_custom_filename(
         apply_mutation(root, target_task)
     assert not apply_patch_text(root, target_task, response("checks.py", "assert True\n"))[0]
     assert (root / "checks.py").read_text() == content
+
+
+@pytest.mark.parametrize(
+    ("config_name", "config"),
+    [
+        ("pytest.ini", "[pytest]\npython_files = checks.py\n"),
+        ("pyproject.toml", '[tool.pytest.ini_options]\npython_files = ["checks.py"]\n'),
+        ("tox.ini", "[pytest]\npython_files = checks.py\n"),
+        ("setup.cfg", "[tool:pytest]\npython_files = checks.py\n"),
+    ],
+)
+def test_task_cannot_edit_custom_collected_test_selected_through_directory(
+    tmp_path: Path, config_name: str, config: str
+) -> None:
+    root, task = fixture_repo(tmp_path)
+    verification = root / "verification"
+    verification.mkdir()
+    content = "def test_required():\n    assert 1 == 1\n"
+    (verification / "checks.py").write_text(content)
+    (root / config_name).write_text(config)
+    target_task = replace(
+        task,
+        bug_location="verification/checks.py:2",
+        original_line="    assert 1 == 1",
+        mutated_line="    assert 1 == 2",
+        test_command="python -m pytest -q verification",
+    )
+    with pytest.raises(ValueError, match="explicitly selected evaluation tests"):
+        apply_mutation(root, target_task)
+    assert not apply_patch_text(
+        root, target_task, response("verification/checks.py", "assert True\n")
+    )[0]
+    assert (verification / "checks.py").read_text() == content
 
 
 @pytest.mark.parametrize(
