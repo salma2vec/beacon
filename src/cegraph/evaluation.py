@@ -5,10 +5,10 @@ This module is not an OS sandbox. Run untrusted code in an external container.
 
 from __future__ import annotations
 
+import ast
 import json
 import math
 import os
-import py_compile
 import re
 import shlex
 import shutil
@@ -19,7 +19,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,7 +33,11 @@ def task_target(repo_root: Path, task: TaskRecord) -> Path:
         raise ValueError("Task source path must be relative and contained in the repository")
     if relative.suffix != ".py" or any(p.startswith(".") for p in relative.parts):
         raise ValueError("Task target must be a visible Python source file")
-    if any(p in {"tests", "test"} or p.startswith("test_") for p in relative.parts):
+    if (
+        relative.name == "conftest.py"
+        or relative.name.endswith("_test.py")
+        or any(p in {"tests", "test"} or p.startswith("test_") for p in relative.parts)
+    ):
         raise ValueError("Task target cannot modify the evaluation tests")
     target = repo_root / relative
     if any(
@@ -43,7 +47,76 @@ def task_target(repo_root: Path, task: TaskRecord) -> Path:
         raise ValueError("Task target cannot traverse a symlink")
     if not target.resolve().is_relative_to(repo_root.resolve()) or not target.is_file():
         raise ValueError("Task target must be an existing file inside the repository")
+    # A dry run can carry an unsupported runner; actual scoring rejects it.
+    try:
+        arguments = _pytest_arguments(task.test_command)
+    except ValueError:
+        arguments = []
+    for argument in arguments:
+        if argument.startswith("-"):
+            continue
+        selected = repo_root / argument.split("::", 1)[0]
+        if selected.resolve() == target.resolve():
+            raise ValueError("Task target cannot modify explicitly selected evaluation tests")
+    if _contains_pytest_hooks(target) or target.resolve() in _local_pytest_plugins(repo_root):
+        raise ValueError("Task target cannot modify pytest verifier hooks or plugins")
     return target
+
+
+def _contains_pytest_hooks(path: Path) -> bool:
+    """Protect ordinary named pytest hooks; dynamic aliases still need review."""
+    try:
+        tree = ast.parse(path.read_bytes())
+    except (OSError, SyntaxError) as error:
+        raise ValueError("Task source cannot be inspected") from error
+    return any(
+        isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("pytest_")
+        for node in ast.walk(tree)
+    )
+
+
+def _local_pytest_plugins(repo_root: Path) -> set[Path]:
+    """Find literal pytest_plugins registrations in local conftest files."""
+    plugins: set[Path] = set()
+    for config in repo_root.rglob("conftest.py"):
+        if (
+            config.is_symlink()
+            or any(part.startswith(".") for part in config.relative_to(repo_root).parts)
+            or not config.resolve().is_relative_to(repo_root.resolve())
+        ):
+            continue
+        try:
+            tree = ast.parse(config.read_bytes())
+        except (OSError, SyntaxError) as error:
+            raise ValueError("Pytest configuration cannot be inspected") from error
+        value: ast.expr | None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign):
+                targets, value = node.targets, node.value
+            elif isinstance(node, ast.AnnAssign):
+                targets, value = [node.target], node.value
+            else:
+                continue
+            if value is None or not any(
+                isinstance(name, ast.Name) and name.id == "pytest_plugins" for name in targets
+            ):
+                continue
+            try:
+                names = ast.literal_eval(value)
+            except (ValueError, TypeError):
+                continue  # Dynamic plugin registration requires trusted-manifest review.
+            if isinstance(names, str):
+                names = [names]
+            if not isinstance(names, list | tuple):
+                continue
+            for name in names:
+                if not isinstance(name, str):
+                    continue
+                module = Path(*name.split("."))
+                for base in {repo_root, repo_root / "src", config.parent}:
+                    plugins.add((base / module.with_suffix(".py")).resolve())
+                    plugins.add((base / module / "__init__.py").resolve())
+    return plugins
 
 
 def apply_mutation(repo_root: Path, task: TaskRecord) -> None:
@@ -121,6 +194,7 @@ def apply_patch_text(
 
 
 def compile_python_repo(repo_root: Path) -> tuple[bool, str]:
+    """Check syntax without creating repository-controlled bytecode paths."""
     failures: list[str] = []
     for path in repo_root.rglob("*.py"):
         if path.is_symlink() or any(
@@ -128,9 +202,11 @@ def compile_python_repo(repo_root: Path) -> tuple[bool, str]:
         ):
             continue
         try:
-            py_compile.compile(str(path), doraise=True)
-        except py_compile.PyCompileError as error:
-            failures.append(str(error))
+            # A checkout may contain a __pycache__ symlink. Compiling in memory
+            # avoids following it to write outside the checkout before execution.
+            compile(path.read_bytes(), str(path), "exec", dont_inherit=True)
+        except (OSError, SyntaxError, UnicodeError) as error:
+            failures.append(f"{path}: {error}")
     return not failures, "\n".join(failures)
 
 
@@ -189,8 +265,16 @@ def run_test_command(
                     break
                 time.sleep(min(0.02, timeout))
             # Terminate any children still holding output handles after the parent exits.
-            with suppress(ProcessLookupError):
+            try:
                 os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                if process.poll() is None:
+                    raise
+                # macOS can deny signaling a group after its parent has exited.
+                # Descendant cleanup is then unverified, so never score the run.
+                reason = reason or "process-group cleanup denied after parent exit"
             process.wait()
             stdout_file.seek(0)
             stderr_file.seek(0)

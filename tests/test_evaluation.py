@@ -7,6 +7,7 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -14,6 +15,7 @@ from cegraph import CodebaseGraph, assemble_context, available_methods
 from cegraph.evaluation import (
     apply_mutation,
     apply_patch_text,
+    compile_python_repo,
     evaluate_patch,
     repo_snapshot,
     run_pytest_tests,
@@ -310,3 +312,112 @@ def test_runner_is_not_shadowed_by_repository_pytest_module(tmp_path: Path) -> N
     (root / "pytest.py").write_text("raise RuntimeError('untrusted pytest module')\n")
     result = run_pytest_tests(root, task.test_command)
     assert result.passed and len(result.test_ids) == 2
+
+
+def test_syntax_check_never_writes_through_bytecode_directory_symlink(tmp_path: Path) -> None:
+    root, _ = fixture_repo(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    marker = outside / "marker"
+    marker.write_text("unchanged")
+    (root / "__pycache__").symlink_to(outside, target_is_directory=True)
+    assert compile_python_repo(root) == (True, "")
+    assert list(outside.iterdir()) == [marker]
+    assert marker.read_text() == "unchanged"
+    (root / "calc.py").write_text("def invalid(:\n")
+    passed, reason = compile_python_repo(root)
+    assert not passed and "calc.py" in reason
+    assert list(outside.iterdir()) == [marker]
+
+
+@pytest.mark.parametrize("filename", ["conftest.py", "calc_test.py", "pkg/conftest.py"])
+def test_task_cannot_designate_pytest_verifier_as_repair_source(
+    tmp_path: Path, filename: str
+) -> None:
+    root, task = fixture_repo(tmp_path)
+    verifier = root / filename
+    verifier.parent.mkdir(exist_ok=True)
+    verifier.write_text("x = 1\n")
+    target_task = replace(
+        task, bug_location=f"{filename}:1", original_line="x = 1", mutated_line="x = 2"
+    )
+    with pytest.raises(ValueError, match="evaluation tests"):
+        apply_mutation(root, target_task)
+    assert not apply_patch_text(root, target_task, response(filename, "x = 2\n"))[0]
+    assert verifier.read_text() == "x = 1\n"
+
+
+@pytest.mark.parametrize("selection", ["checks.py", "./checks.py::test_required"])
+def test_task_cannot_edit_explicitly_selected_test_with_custom_filename(
+    tmp_path: Path, selection: str
+) -> None:
+    root, task = fixture_repo(tmp_path)
+    content = "def test_required():\n    assert 1 == 1\n"
+    (root / "checks.py").write_text(content)
+    target_task = replace(
+        task,
+        bug_location="checks.py:2",
+        original_line="    assert 1 == 1",
+        mutated_line="    assert 1 == 2",
+        test_command=f"python -m pytest -q {selection}",
+    )
+    with pytest.raises(ValueError, match="explicitly selected evaluation tests"):
+        apply_mutation(root, target_task)
+    assert not apply_patch_text(root, target_task, response("checks.py", "assert True\n"))[0]
+    assert (root / "checks.py").read_text() == content
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "config"),
+    [
+        ("checks_plugin.py", "def pytest_pyfunc_call(item):\n    return None\n", ""),
+        (
+            "checks_plugin.py",
+            "def custom_hook(item):\n    return None\n",
+            "pytest_plugins = ['checks_plugin']\n",
+        ),
+        (
+            "src/validation/plugin.py",
+            "x = 1\n",
+            "pytest_plugins: list[str] = ['validation.plugin']\n",
+        ),
+        ("validation/__init__.py", "x = 1\n", "pytest_plugins = 'validation'\n"),
+    ],
+)
+def test_task_cannot_edit_named_hooks_or_registered_local_pytest_plugins(
+    tmp_path: Path, filename: str, content: str, config: str
+) -> None:
+    root, task = fixture_repo(tmp_path)
+    path = root / filename
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    (root / "conftest.py").write_text(config)
+    target_task = replace(
+        task,
+        bug_location=f"{filename}:1",
+        original_line=content.splitlines()[0],
+        mutated_line="raise AssertionError",
+    )
+    with pytest.raises(ValueError, match="pytest verifier hooks or plugins"):
+        apply_mutation(root, target_task)
+    assert not apply_patch_text(root, target_task, response(filename, "x = 0\n"))[0]
+    assert path.read_text() == content
+
+
+def test_source_with_directory_test_selection_ignores_hidden_environment_hooks(
+    tmp_path: Path,
+) -> None:
+    root, task = fixture_repo(tmp_path)
+    hidden = root / ".venv" / "conftest.py"
+    hidden.parent.mkdir()
+    hidden.write_text("not valid Python !\n")
+    apply_mutation(root, replace(task, test_command="python -m pytest -q ."))
+    assert "return a - b" in (root / "calc.py").read_text()
+
+
+def test_exited_process_group_cleanup_denial_cannot_score_success(tmp_path: Path) -> None:
+    command = shlex.join([sys.executable, "-c", "print('completed')"])
+    with patch("cegraph.evaluation.os.killpg", side_effect=PermissionError):
+        code, stdout, stderr = run_test_command(tmp_path, command)
+    assert code == 124 and "completed" in stdout
+    assert "process-group cleanup denied" in stderr

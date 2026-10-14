@@ -54,10 +54,34 @@ Mac ran short of memory/disk. It produced **zero completed attempts and no model
 scores**. `llama3-infrastructure-failure.json` preserves that failed protocol;
 the smaller-model results are a separate experiment, not substituted scores.
 
-## Reproduce
+## Current harness control
 
-Use a fresh output directory. Python 3.11 and pytest 8.4.2 are intentional: this
-upstream release's collection hook is incompatible with pytest 9. The model runs
+The supported development install uses pytest 9.0.3 or newer. To validate the
+current mutation/repair harness without downloading a model or executing an
+external repository, run from a fresh checkout and use a new output directory:
+
+```bash
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python -e '.[dev]'
+.venv/bin/python -m examples.offline_benchmark --output /tmp/beacon-current-control
+```
+
+This runs six known-repair controls on a generated local fixture. It does not
+reproduce the Boltons or Qwen results above.
+
+## Archived reproduction record
+
+The original pilot used Python 3.11 and pytest 8.4.2 because this upstream
+release's collection hook is incompatible with pytest 9. Pytest 8.4.2 is affected
+by [CVE-2025-71176](https://github.com/pytest-dev/pytest/releases/tag/9.0.3).
+Its frozen requirements and results are preserved unchanged. They do not satisfy
+the current development requirements; use the original experiment checkout for
+historical replay in an isolated disposable environment. A replay with patched
+pytest requires a separately recorded upstream-hook compatibility change and
+fresh controls; no such replay is claimed here.
+
+The following commands record the original procedure, not the supported current
+installation. Use a fresh output directory. The model runs
 locally, but generated source still executes with your user's filesystem/network
 permissions after the explicit acknowledgement. Use a disposable external sandbox
 for untrusted evaluation.

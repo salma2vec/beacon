@@ -17,6 +17,11 @@ introduces a failing mutation, and evaluates a known correct repair across retri
 methods and budgets. It needs no API key. Its results are **harness controls**, not
 LLM scores or evidence that one retrieval method is better.
 
+The supported development install requires pytest 9.0.3 or newer. The archived
+Boltons pilot below used an older, vulnerable pytest release for compatibility
+with upstream hooks; its frozen environment is historical evidence, not the
+recommended install.
+
 A [real-repository pilot](examples/results/boltons-pilot/README.md) adds three
 pinned Boltons mutations, upstream behavioral tests, 18 passing known-repair
 controls and an actual local-model trial. It keeps model failures, prompt/response
@@ -110,9 +115,17 @@ counts. A zero exit status alone never establishes success; direct `sys.exit(0)`
 and `os._exit(0)` bypasses are regression-tested.
 Retrieval sees the mutated pinned snapshot, never the caller's working tree. Every
 repair starts from a fresh copy. Only the task's declared Python source file may be
-patched; test-file, symlink, mode-change and escaping-path edits are rejected. A
+patched; conventional test filenames/directories, `conftest.py`, files explicitly
+selected by the pytest command, named pytest hooks, local plugins registered by
+literal `pytest_plugins` assignments in `conftest.py`, symlinks, mode changes and escaping paths are
+rejected. Syntax checks compile in memory and never
+write through repository-controlled bytecode-cache paths. A
 missing test command, timeout, invalid patch or failing test cannot score as a pass.
-Test quality remains the experiment author's responsibility. These completion
+Test quality remains the experiment author's responsibility. Task authors must
+also exclude custom-collected tests, test helpers, plugins registered in test
+modules and dynamically registered or aliased plugins from repair targets;
+static checks cannot identify every verifier
+component. These completion
 checks are not tamper-proof: adversarial code in the pytest process can forge
 reports or interfere with the runner. Strong adversarial evaluation requires an
 external sandbox and independently protected test instrumentation.
