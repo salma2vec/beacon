@@ -25,8 +25,10 @@ from cegraph.models import RepairPrompt, TaskRecord, task_identifier
 from examples.public_repo_benchmark import MANIFEST, ReferencePatchClient, qwen_counter
 from paper.experiments.benchmark import build_prompt, build_query, load_tasks
 
-MODEL = "qwen2.5-coder:0.5b"
-DIGEST = "4ff64a7f502a08b7616edb8ca0a79eb1853fc363d842b7df4b46915d11a3fb09"
+MODELS = {
+    "qwen2.5-coder:0.5b": "4ff64a7f502a08b7616edb8ca0a79eb1853fc363d842b7df4b46915d11a3fb09",
+    "qwen2.5-coder:1.5b": "d7372fd828518a4d38b1eb196c673c31a85f2ed302b3d1e406c4c2d1b64a0668",
+}
 HOOK_HASH = "c41d72fb69c1db601e8509929e65b758e24766268faa4f7797d458593ab12e80"
 CHALLENGE_PATH = "tests/test_beacon_behavior.py"
 
@@ -97,7 +99,15 @@ def score_copy(snapshot: Path, task: TaskRecord, response: Any, test_ids: frozen
         shutil.rmtree(trial)
 
 
-def run(repo: Path, output: Path, tokenizer: Path | None, controls_only: bool) -> dict[str, Any]:
+def run(
+    repo: Path,
+    output: Path,
+    tokenizer: Path | None,
+    controls_only: bool,
+    model: str = "qwen2.5-coder:0.5b",
+) -> dict[str, Any]:
+    if model not in MODELS:
+        raise ValueError("Choose a pinned pilot model")
     tasks = load_tasks(MANIFEST)
     root = Path(__file__).resolve().parents[1]
     dirty = subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True)
@@ -137,8 +147,8 @@ def run(repo: Path, output: Path, tokenizer: Path | None, controls_only: bool) -
             **{p: version(p) for p in ("beacon", "pytest", "tiktoken")},
             "tokenizers": version("tokenizers") if counter else None,
         },
-        "model": MODEL,
-        "expected_digest": DIGEST,
+        "model": model,
+        "expected_digest": MODELS[model],
         "methods": ["bm25", "bca"],
         "budgets": [256, 1024],
         "formats": ["diff", "exact_edit"],
@@ -164,12 +174,12 @@ def run(repo: Path, output: Path, tokenizer: Path | None, controls_only: bool) -
     if not controls_only:
         for fmt in ("diff", "exact_edit"):
             transport = OllamaRepairClient(
-                MODEL,
+                model,
                 timeout=60,
                 prompt_token_counter=counter,
                 response_schema=EDIT_SCHEMA if fmt == "exact_edit" else None,
             )
-            if transport.digest != DIGEST:
+            if transport.digest != MODELS[model]:
                 raise ValueError("Pilot model digest differs")
             transports[fmt] = transport
     rows = []
@@ -218,6 +228,8 @@ def run(repo: Path, output: Path, tokenizer: Path | None, controls_only: bool) -
                     diff_prompt = build_prompt(task, query, assembled.context.render())
                     formats = ("diff", "exact_edit") if index % 2 == 0 else ("exact_edit", "diff")
                     for fmt in formats:
+                        if shutil.disk_usage(output).free < 2 * 1024**3:
+                            raise ValueError("Stop model experiment: less than2GiB disk headroom")
                         prompt = (
                             diff_prompt
                             if fmt == "diff"
@@ -285,11 +297,20 @@ if __name__ == "__main__":
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--tokenizer-json", type=Path)
+    parser.add_argument("--model", choices=MODELS, default="qwen2.5-coder:0.5b")
     parser.add_argument("--controls-only", action="store_true")
     parser.add_argument("--allow-local-execution", action="store_true")
     args = parser.parse_args()
     if not args.allow_local_execution:
         parser.error("Use --allow-local-execution for this trusted-local experiment")
     print(
-        json.dumps(run(args.repo.resolve(), args.output, args.tokenizer_json, args.controls_only))
+        json.dumps(
+            run(
+                args.repo.resolve(),
+                args.output,
+                args.tokenizer_json,
+                args.controls_only,
+                args.model,
+            )
+        )
     )

@@ -1,0 +1,18 @@
+{
+  "controls_passed": 3,
+  "attempt_count": 24,
+  "formats": {
+    "diff": {
+      "attempts": 12,
+      "passes": 0,
+      "errors": 0
+    },
+    "exact_edit": {
+      "attempts": 12,
+      "passes": 0,
+      "errors": 0
+    }
+  },
+  "complete": true,
+  "interpretation": "Diagnostic only; exposed tasks and one model, no generalization claim."
+}

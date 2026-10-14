@@ -1,0 +1,46 @@
+{
+  "controls_passed": 3,
+  "attempt_count": 24,
+  "formats": {
+    "diff": {
+      "attempts": 12,
+      "passes": 0,
+      "errors": 0
+    },
+    "exact_edit": {
+      "attempts": 12,
+      "passes": 0,
+      "errors": 0
+    }
+  },
+  "complete": true,
+  "interpretation": "Diagnostic only; exposed tasks and one model, no generalization claim.",
+  "stage_diagnosis": {
+    "diff": {
+      "compiled": 0,
+      "stops": {
+        "stop": 6,
+        "length": 6
+      },
+      "failures": {
+        "patch must edit only the declared task source": 6,
+        "empty patch": 6
+      }
+    },
+    "exact_edit": {
+      "compiled": 0,
+      "stops": {
+        "stop": 12
+      },
+      "failures": {
+        "Edit path must name an authorized Python source file": 8,
+        "Edit produces invalid Python": 1,
+        "Edit makes no change": 2,
+        "Search text must match exactly once": 1
+      }
+    }
+  },
+  "diagnostic_gate_passed": false,
+  "native_counts_matched": 24,
+  "results_sha256": "adb71a46d5b8898207919cd6a22ac25d41f27a4177f5f0b033d3402f89da3767"
+}
