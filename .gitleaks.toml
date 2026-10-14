@@ -17,6 +17,6 @@ regexes = ['''^c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539$
 [[rules.allowlists]]
 description = "Exact public token-counter source checksum"
 condition = "AND"
-paths = ['''^examples/results/edit-format-pilot/(qwen05|qwen15/interrupted)/protocol\.json$''']
+paths = ['''^examples/results/(edit-format-pilot/(qwen05|qwen15/interrupted)|grounded-edit-pilot/run)/protocol\.json$''']
 regexTarget = "secret"
 regexes = ['''^c88ff0b6a28376f1d84d17d0e81f43890149a9d3820e99e905838ab8e36311c4$''']

@@ -1,0 +1,65 @@
+{
+  "kind": "exposed_task_grounded_edit_diagnosis",
+  "source_head": "b628509f978d5e65f90dadc1938bd9b1e4da51f1",
+  "source_sha256": {
+    "examples/grounded_edit_pilot.py": "ab2e7ebe415b8a3cb89f609c5d90304128418e1f203287610b43a682feeb615a",
+    "examples/edit_format_pilot.py": "e0715e1f9da858aa19f8da57337d48626400022ad8a9f96070a1c2c749f7bf5e",
+    "examples/public_repo_benchmark.py": "7971fb4f3c1a90106c786b413a43d040fc62d1a189c273af74e9fab8e9347c21",
+    "src/cegraph/edits.py": "ba8791910a70c288836cda5fb840091e960ea0c9eec5104690afc52ca2e490e7",
+    "src/cegraph/llm.py": "a5601fec4ded5c0e1207c7edb85a31c3bb113568919924f767c7e314a8813f32",
+    "src/cegraph/evaluation.py": "08089db21afb09c4d867d448557a33af03ca225277317b0183fa53c1987de4bc",
+    "src/cegraph/methods.py": "9412d3d9c14b640fd597aac896c45cce81f28a16311f44e56894fdd0ebf895c1",
+    "src/cegraph/graph.py": "f73edb9ad738df749a3534bd3e0c843ac14eea370cd3bfd7805a1fcb103b2428",
+    "src/cegraph/parser.py": "8ba375097e9928bdf9013f635f98aff979371f9bbc8b32b9b2d7b638465d9280",
+    "src/cegraph/index.py": "c815f18f7025f8a14719a0af1268b4bab1b8d09ff40a94520406094bd17c793a",
+    "src/cegraph/models.py": "8684a7aba49a082d15ec6fa41d4affb2df80b712e21706b44a371823ba1d8df3",
+    "src/cegraph/tokens.py": "c88ff0b6a28376f1d84d17d0e81f43890149a9d3820e99e905838ab8e36311c4",
+    "paper/experiments/benchmark.py": "f0be9484f45d47c8effb8fd16762dcc8d8ba9a82edc714bf193508d1f0d7fd47"
+  },
+  "manifest_sha256": "555bf3cff6f678ff5a96649e4e3a1f9bc91e875e133773f2bff6df7e576e2716",
+  "python": "3.14.2",
+  "versions": {
+    "beacon": "0.1.0",
+    "pytest": "9.1.1",
+    "tiktoken": "0.14.0",
+    "tokenizers": "0.23.3"
+  },
+  "model": "qwen2.5-coder:1.5b",
+  "expected_digest": "d7372fd828518a4d38b1eb196c673c31a85f2ed302b3d1e406c4c2d1b64a0668",
+  "methods": [
+    "bm25",
+    "grounded_bm25"
+  ],
+  "budget": 256,
+  "states": [
+    "mutant",
+    "clean"
+  ],
+  "attempt_order": "task_manifest_then_state_mutant_clean_then_method_list",
+  "seed": 42,
+  "temperature": 0,
+  "num_ctx": 4096,
+  "num_predict": 512,
+  "timeout_seconds": 60,
+  "maximum_attempts": 12,
+  "retries": 0,
+  "hook_hash": "c41d72fb69c1db601e8509929e65b758e24766268faa4f7797d458593ab12e80",
+  "challenge_sha256": {
+    "boltons/mathutils.py": "bbfa898062884f336135f6d464c8d213ee427e5f6896d25b2ee51a90a4339825",
+    "boltons/iterutils.py": "5a1de84717ff7bfaec421698a880ec38f8469afee4a7ee8e9e33026592988ba6",
+    "boltons/strutils.py": "9a75cda182327c2112a28b5d5caed290e1531f9a4e939cf06368da4806341906"
+  },
+  "controls_only": false,
+  "frozen_gate": {
+    "repair": "mutant patch passes original tests and independent behavior probes",
+    "clean_damage": "a compiled clean-source patch fails either protected test set",
+    "budget": "literal rendered context <= 256 cl100k tokens; native full prompt verified",
+    "grounding": "schema path enum and compiler sources derive only from visible chunks"
+  },
+  "limits": [
+    "Three previously exposed synthetic mutations; diagnostic only.",
+    "One small model, one seed and no retries; no reliability or superiority claim.",
+    "Compact rendering and query-symbol anchoring are engineering choices, not novelty claims.",
+    "Local trusted host, not authenticated inference or an execution sandbox."
+  ]
+}

@@ -36,14 +36,17 @@ behavior probes. This establishes a working path, not reliable repair or a BCA
 advantage. A timeout and the separately completed disk-interrupted condition remain
 in the evidence.
 
-The next diagnostic adds two safeguards without changing the published baselines.
+The [grounded exact-edit diagnostic](examples/results/grounded-edit-pilot/README.md)
+adds two safeguards without changing the published baselines.
 `grounded_bm25` reserves source for a symbol named verbatim in the developer report
 and uses a compact header that keeps the repository path and qualified symbol.
 Exact-edit schemas can then restrict `path` to non-test source files actually shown
 in the rendered context. This selection reads no task location, mutation label or
-known repair. The [frozen protocol](examples/results/grounded-edit-pilot/PROTOCOL.md)
-uses the same exposed tasks and therefore can diagnose engineering failures only;
-it cannot establish retrieval superiority or generalization.
+known repair. The frozen run repaired 0/6 mutations and caused no observed damage
+across six clean-source trials. It removed unauthorized-path failures but did not
+solve exact-copy or repair reasoning errors. The compact BM25 and query-anchored
+contexts were identical on this panel, so the result identifies no benefit from the
+anchor and establishes neither retrieval superiority nor generalization.
 
 ## Library
 

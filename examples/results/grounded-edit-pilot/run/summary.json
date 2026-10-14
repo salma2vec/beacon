@@ -1,0 +1,10 @@
+{
+  "controls_passed": 3,
+  "attempt_count": 12,
+  "planned_attempts": 12,
+  "repairs": 0,
+  "clean_damage": 0,
+  "all_contexts_within_budget": true,
+  "compact_grounded_equivalent_cells": 12,
+  "interpretation": "Exposed-task diagnostic only; no retrieval superiority claim."
+}

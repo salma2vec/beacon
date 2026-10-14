@@ -1,0 +1,50 @@
+{
+  "source_head": "b628509f978d5e65f90dadc1938bd9b1e4da51f1",
+  "attempts": 12,
+  "mutant_attempts": 6,
+  "repairs": 0,
+  "clean_attempts": 6,
+  "observed_clean_damage": 0,
+  "clean_edits_applied": 1,
+  "clean_edits_passing_protected_tests": 1,
+  "valid_exact_edits": 2,
+  "normal_stops": 12,
+  "native_prompt_counts_verified": 12,
+  "unauthorized_path_failures": 0,
+  "failure_stage": {
+    "invalid_python": 5,
+    "nonunique_or_nonmatching_search": 5,
+    "compiled_but_behavior_failed": 1,
+    "compiled_clean_edit_passed": 1
+  },
+  "methods": {
+    "bm25": {
+      "attempts": 6,
+      "valid_exact_edits": 2,
+      "mutant_repairs": 0,
+      "observed_clean_damage": 0,
+      "target_file_visible_posthoc": 4
+    },
+    "grounded_bm25": {
+      "attempts": 6,
+      "valid_exact_edits": 0,
+      "mutant_repairs": 0,
+      "observed_clean_damage": 0,
+      "target_file_visible_posthoc": 6
+    }
+  },
+  "context_budget": {
+    "declared_cl100k_tokens": 256,
+    "maximum_observed_cl100k_tokens": 256,
+    "native_full_prompt_token_range": [372, 415],
+    "reserved_native_prompt_capacity": 3584
+  },
+  "compact_and_grounded_contexts_identical_unique_cells": 6,
+  "uncompressed_evidence_sha256": {
+    "controls.jsonl": "34dede5107437d24d480e9009fe8963269a7b49652d986b114744c3e5207d376",
+    "protocol.json": "cadc71e90dde90b4d75d0a2195b3cb3ab9228fc44bf065b6e13a1390f23fa8bf",
+    "results.jsonl": "a1b997d4fefed3ffbb4e57048ee169f822fd376ca1afcc38f7eab3aa6893faa7",
+    "summary.json": "1a1d7a75a46e7921376a0ac452e94c0303e46f9832309b3c39e509a60f671736"
+  },
+  "interpretation": "The frozen exposed-task diagnostic failed its repair gate. Visible-path schemas removed wrong-path format errors and compact grounded context exposed every target file, but Qwen 1.5B repaired no mutation. This is no evidence of retrieval superiority, reliability, or generalization."
+}
