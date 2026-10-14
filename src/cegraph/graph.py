@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .index import EmbeddingIndex, LexicalIndex, build_node_document, unique_preserving_order
-from .models import Edge, EdgeKind, GraphSummary, Node
+from .models import Edge, EdgeKind, GraphSummary, Node, NodeKind
 from .parser import ParsedModule, PendingEdge, iter_python_files, parse_python_file
 from .tokens import TokenCounter
 
@@ -198,6 +198,17 @@ class CodebaseGraph:
     def node_ids_for_file(self, file_path: str) -> list[str]:
         normalized = file_path.replace("\\", "/")
         return list(self._file_index.get(normalized, []))
+
+    def source_for_file(self, file_path: str) -> str:
+        """Return the immutable indexed source for one repository file."""
+        module_nodes = [
+            self.nodes[node_id]
+            for node_id in self.node_ids_for_file(file_path)
+            if self.nodes[node_id].kind == NodeKind.MODULE
+        ]
+        if len(module_nodes) != 1:
+            raise ValueError("Indexed source file must have exactly one module node")
+        return module_nodes[0].source
 
     def nearest_node(self, location: str) -> str | None:
         file_path, _, maybe_line = location.partition(":")

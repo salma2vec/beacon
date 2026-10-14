@@ -481,10 +481,26 @@ def evaluate_patch(
         )
     applied, reason = apply_patch_text(repo_root, task, response)
     if not applied:
-        return EvaluationResult(False, False, False, 1, "", reason)
+        return EvaluationResult(
+            False,
+            False,
+            False,
+            1,
+            "",
+            reason,
+            {"patch_applied": False, "apply_reason": reason, "evaluated": False},
+        )
     compiled, compile_output = compile_python_repo(repo_root)
     if not compiled:
-        return EvaluationResult(False, False, False, 1, "", compile_output)
+        return EvaluationResult(
+            False,
+            False,
+            False,
+            1,
+            "",
+            compile_output,
+            {"patch_applied": True, "apply_reason": reason, "evaluated": False},
+        )
     result = run_pytest_tests(repo_root, task.test_command, timeout, required_test_ids)
     return EvaluationResult(
         True,
@@ -494,6 +510,7 @@ def evaluate_patch(
         result.stdout,
         result.stderr,
         {
+            "patch_applied": True,
             "apply_reason": reason,
             "evaluated": True,
             "test_runner": "pytest-junit",

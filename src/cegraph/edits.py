@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import json
 from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any
 
@@ -31,6 +33,86 @@ EDIT_SYSTEM = (
 )
 
 
+@dataclass(slots=True, frozen=True)
+class ExactEditContract:
+    """A schema and compiler sources derived only from visible context."""
+
+    schema: dict[str, Any]
+    system: str
+    sources: dict[str, str]
+    source_sha256: dict[str, str]
+
+
+def _authorized_source_path(path: str) -> bool:
+    relative = PurePosixPath(path)
+    return bool(
+        path
+        and len(path) <= 512
+        and "\\" not in path
+        and all(ord(char) >= 32 and ord(char) != 127 for char in path)
+        and not relative.is_absolute()
+        and relative.as_posix() == path
+        and relative.suffix == ".py"
+        and all(not part.startswith(".") for part in relative.parts)
+        and relative.name not in {"conftest.py", "test.py", "tests.py"}
+        and not relative.name.endswith("_test.py")
+        and all(
+            part not in {"tests", "test"} and not part.startswith("test_")
+            for part in relative.parts
+        )
+    )
+
+
+def exact_edit_schema(visible_paths: list[str]) -> dict[str, Any]:
+    """Constrain decoding to source paths already present in model context."""
+    paths = list(dict.fromkeys(visible_paths))
+    if not paths or any(not _authorized_source_path(path) for path in paths):
+        raise ValueError("Visible edit paths must be authorized Python source files")
+    return {
+        **EDIT_SCHEMA,
+        "properties": {
+            **EDIT_SCHEMA["properties"],
+            "path": {"type": "string", "enum": paths},
+        },
+    }
+
+
+def exact_edit_system(visible_paths: list[str]) -> str:
+    """Tell the model the same visible-path constraint enforced by the schema."""
+    paths = list(dict.fromkeys(visible_paths))
+    exact_edit_schema(paths)
+    rendered = ", ".join(json.dumps(path) for path in paths)
+    return f"{EDIT_SYSTEM} The path must be one of these visible source files: {rendered}."
+
+
+def grounded_edit_contract(graph: Any, selected_node_ids: list[str]) -> ExactEditContract:
+    """Bind exact edits to non-test source files represented in rendered context.
+
+    This reads no task manifest or bug location. Full indexed file text is trusted
+    compiler state; only selected exact indexed-source spans are model context.
+    """
+    paths: list[str] = []
+    for node_id in selected_node_ids:
+        try:
+            node = graph.get_node(node_id)
+        except KeyError as exc:
+            raise ValueError("Selected context node is absent from the indexed graph") from exc
+        if _authorized_source_path(node.file_path):
+            paths.append(node.file_path)
+    paths = list(dict.fromkeys(paths))
+    schema = exact_edit_schema(paths)
+    sources = {path: graph.source_for_file(path) for path in paths}
+    for node_id in selected_node_ids:
+        node = graph.get_node(node_id)
+        if node.file_path in sources and node.source not in sources[node.file_path]:
+            raise ValueError("Selected context span is not recoverable from indexed source")
+    hashes = {
+        path: hashlib.sha256(source.encode("utf-8")).hexdigest()
+        for path, source in sources.items()
+    }
+    return ExactEditContract(schema, exact_edit_system(paths), sources, hashes)
+
+
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
@@ -55,19 +137,8 @@ def compile_exact_edit(raw: str, sources: Mapping[str, str]) -> str:
     if not all(isinstance(value, str) for value in payload.values()):
         raise ValueError("Edit fields must be strings")
     path, search, replacement = payload["path"], payload["search"], payload["replace"]
-    relative = PurePosixPath(path)
     if (
-        not path
-        or len(path) > 512
-        or "\\" in path
-        or any(ord(char) < 32 or ord(char) == 127 for char in path)
-        or relative.is_absolute()
-        or relative.as_posix() != path
-        or relative.suffix != ".py"
-        or any(part.startswith(".") for part in relative.parts)
-        or relative.name in {"conftest.py", "test.py", "tests.py"}
-        or relative.name.endswith("_test.py")
-        or any(part in {"tests", "test"} or part.startswith("test_") for part in relative.parts)
+        not _authorized_source_path(path)
         or path not in sources
     ):
         raise ValueError("Edit path must name an authorized Python source file")

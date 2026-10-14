@@ -107,8 +107,16 @@ class AssembledContext:
 
     def render(self) -> str:
         parts: list[str] = []
+        render_format = self.metadata.get("render_format", "verbose_v1")
         for chunk in self.chunks:
-            header = f"# {chunk.node_id} ({chunk.token_cost} tokens, score={chunk.score:.3f})"
+            if render_format == "recoverable_v1":
+                # The node id already carries the exact repository path and symbol.
+                # Keep that recoverability while avoiding baseline-only score prose.
+                header = f"# {chunk.node_id}"
+            elif render_format == "verbose_v1":
+                header = f"# {chunk.node_id} ({chunk.token_cost} tokens, score={chunk.score:.3f})"
+            else:
+                raise ValueError(f"Unknown context render format: {render_format}")
             parts.append(f"{header}\n{chunk.text}".strip())
         return "\n\n".join(parts)
 

@@ -36,6 +36,15 @@ behavior probes. This establishes a working path, not reliable repair or a BCA
 advantage. A timeout and the separately completed disk-interrupted condition remain
 in the evidence.
 
+The next diagnostic adds two safeguards without changing the published baselines.
+`grounded_bm25` reserves source for a symbol named verbatim in the developer report
+and uses a compact header that keeps the repository path and qualified symbol.
+Exact-edit schemas can then restrict `path` to non-test source files actually shown
+in the rendered context. This selection reads no task location, mutation label or
+known repair. The [frozen protocol](examples/results/grounded-edit-pilot/PROTOCOL.md)
+uses the same exposed tasks and therefore can diagnose engineering failures only;
+it cannot establish retrieval superiority or generalization.
+
 ## Library
 
 ```python
@@ -65,6 +74,8 @@ on first use.
 | `bca_no_closure` | Seed-only ablation |
 | `bca_no_scoring` | Fixed-seed shuffled graph candidates |
 | `target_file` | Explicit oracle file-location control |
+| `compact_bm25` | BM25 order with compact, indexed-source-recoverable path/symbol headers |
+| `grounded_bm25` | Compact BM25 with report-named symbols considered first; no task-label access |
 
 Nodes represent modules, classes, functions and methods. AST-derived edges represent
 calls, imports, assignments, inheritance and decorators. Dynamic Python dispatch is

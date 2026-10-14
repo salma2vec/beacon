@@ -121,6 +121,7 @@ def test_pinned_mutation_and_evaluation(tmp_path: Path) -> None:
             required_test_ids=baseline.test_ids,
         )
         assert result.pass_at_1
+        assert result.metadata["patch_applied"] is True
     assert not snapshot.exists()
     assert (root / "calc.py").read_text() == "dirty checkout"
 

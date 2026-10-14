@@ -5,7 +5,15 @@ import subprocess
 
 import pytest
 
-from cegraph.edits import EDIT_SCHEMA, ExactEditRepairClient, compile_exact_edit
+from cegraph import CodebaseGraph, assemble_context
+from cegraph.edits import (
+    EDIT_SCHEMA,
+    ExactEditRepairClient,
+    compile_exact_edit,
+    exact_edit_schema,
+    exact_edit_system,
+    grounded_edit_contract,
+)
 from cegraph.llm import OllamaRepairClient
 from cegraph.models import RepairPrompt, RepairResponse
 
@@ -126,3 +134,27 @@ def test_schema_reaches_transport_without_fence_repair(monkeypatch):
     assert requests[0]["format"] == EDIT_SCHEMA
     assert result.patch_text.startswith("```json")
     assert result.metadata["output_format"] == "json_schema"
+
+
+def test_grounded_contract_uses_only_visible_non_test_paths(tmp_path):
+    (tmp_path / "maths.py").write_text(SOURCE)
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_maths.py").write_text("def test_clip():\n    pass\n")
+    graph = CodebaseGraph.from_repo(tmp_path)
+    result = assemble_context(graph, "clip regression", "grounded_bm25", budget=100)
+    contract = grounded_edit_contract(graph, result.selected_node_ids)
+    assert list(contract.sources) == ["maths.py"]
+    assert contract.schema["properties"]["path"] == {
+        "type": "string",
+        "enum": ["maths.py"],
+    }
+    assert '"maths.py"' in contract.system
+    assert "tests/test_maths.py" not in contract.system
+    assert len(contract.source_sha256["maths.py"]) == 64
+
+
+def test_grounded_schema_rejects_empty_or_unsafe_visible_paths():
+    with pytest.raises(ValueError, match="Visible edit paths"):
+        exact_edit_schema([])
+    with pytest.raises(ValueError, match="Visible edit paths"):
+        exact_edit_system(["tests/test_maths.py"])

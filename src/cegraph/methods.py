@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import random
+import re
 from collections import defaultdict
 from collections.abc import Iterable
 
@@ -22,6 +23,8 @@ METHODS = [
     "bca_no_closure",
     "bca_no_scoring",
     "target_file",
+    "compact_bm25",
+    "grounded_bm25",
 ]
 
 
@@ -83,6 +86,8 @@ def _chunks_from_selection(
     budget: int,
     method: str,
     alpha: float,
+    render_format: str = "verbose_v1",
+    result_metadata: dict[str, object] | None = None,
 ) -> MethodResult:
     chunks: list[ContextChunk] = []
     total_tokens = 0
@@ -99,7 +104,11 @@ def _chunks_from_selection(
             },
         )
         trial = AssembledContext(
-            method=method, budget=budget, chunks=[*chunks, chunk], total_tokens=0
+            method=method,
+            budget=budget,
+            chunks=[*chunks, chunk],
+            total_tokens=0,
+            metadata={"render_format": render_format},
         )
         rendered_cost = graph.token_counter.count(trial.render())
         if rendered_cost > budget:
@@ -107,13 +116,28 @@ def _chunks_from_selection(
         chunks.append(chunk)
         total_tokens = rendered_cost
     context = AssembledContext(
-        method=method, budget=budget, chunks=chunks, total_tokens=total_tokens
+        method=method,
+        budget=budget,
+        chunks=chunks,
+        total_tokens=total_tokens,
+        metadata={"render_format": render_format},
     )
     return MethodResult(
         method=method,
         assembled_context=context,
         selected_node_ids=[chunk.node_id for chunk in chunks],
+        metadata=dict(result_metadata or {}),
     )
+
+
+def _exact_query_anchors(graph: CodebaseGraph, query: str) -> list[str]:
+    """Find symbols named verbatim in the report, without task-label access."""
+    identifiers = list(dict.fromkeys(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", query)))
+    by_name: dict[str, list[str]] = defaultdict(list)
+    for node_id, node in graph.nodes.items():
+        if node.kind.value != "module":
+            by_name[node.basename].append(node_id)
+    return [node_id for name in identifiers for node_id in by_name.get(name, [])]
 
 
 def assemble_context(
@@ -155,19 +179,49 @@ def assemble_context(
             spent += token_cost
         return _chunks_from_selection(graph, selected, budget, method, alpha)
 
-    if method in {"bm25", "keyword_map", "vector", "embedding"}:
-        if method == "bm25":
+    if method in {
+        "bm25",
+        "compact_bm25",
+        "grounded_bm25",
+        "keyword_map",
+        "vector",
+        "embedding",
+    }:
+        if method in {"bm25", "compact_bm25", "grounded_bm25"}:
             ranked = graph.lexical_search(query, k=len(graph.nodes))
         elif method == "keyword_map":
             ranked = graph.keyword_search(query, k=len(graph.nodes))
         else:
             ranked = graph.semantic_neighbors(graph.embed_query(query), k=len(graph.nodes))
         # Baselines preserve their own ranking; graph-aware optimization is BCA-only.
+        anchors: list[str] = []
+        if method == "grounded_bm25":
+            anchors = _exact_query_anchors(graph, query)
+            anchor_ids = set(anchors)
+            score_lookup = dict(ranked)
+            ranked = [
+                *((node_id, score_lookup.get(node_id, 0.0)) for node_id in anchors),
+                *((node_id, score) for node_id, score in ranked if node_id not in anchor_ids),
+            ]
         candidates = [
             CandidateScore(node_id, graph.token_count(node_id), score, 0)
             for node_id, score in ranked
         ]
-        return _chunks_from_selection(graph, candidates, budget, method, alpha)
+        compact = method in {"compact_bm25", "grounded_bm25"}
+        return _chunks_from_selection(
+            graph,
+            candidates,
+            budget,
+            method,
+            alpha,
+            render_format="recoverable_v1" if compact else "verbose_v1",
+            result_metadata={
+                "selection_policy": "exact_query_symbol_then_bm25"
+                if method == "grounded_bm25"
+                else "bm25",
+                "query_anchor_node_ids": anchors,
+            },
+        )
 
     if method == "bca_no_scoring":
         pool = _candidate_pool(graph, query, bug_location, depth=2, include_closure=True)
