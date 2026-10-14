@@ -7,8 +7,9 @@ task because available disk fell below its prespecified 2 GiB floor. The first
 discarded or repeated.
 
 The recovery executor completes only that unattempted condition. Before calling
-the model it verifies every original experiment source hash, the task manifest,
-the model digest, the unchanged parameters, and a unique 23-cell partial matrix.
+the model it verifies an independently recorded SHA-256 digest for the external
+parent manifest, every original experiment source hash, the task manifest, the
+model digest, the unchanged parameters, and a unique 23-cell partial matrix.
 It reconstructs the same prompt from the pinned mutant and repeats the scoring
 controls, requiring the original test identifiers. The disk floor remains in
 force. An error from the remaining model call counts as its outcome, without a
@@ -18,8 +19,15 @@ interrupted records remain unchanged.
 ```bash
 python -m examples.complete_edit_pilot --repo /path/to/boltons \
   --interrupted /path/to/interrupted-run --output /fresh/recovery-run \
-  --tokenizer /path/to/pinned-qwen-tokenizer.json --allow-local-execution
+  --tokenizer /path/to/pinned-qwen-tokenizer.json \
+  --parent-manifest /trusted/path/parent-manifest.json \
+  --parent-manifest-sha256 "$INDEPENDENTLY_RECORDED_SHA256" \
+  --allow-local-execution
 ```
+
+Obtain `INDEPENDENTLY_RECORDED_SHA256` from a trusted record made independently
+of the interrupted run and its parent manifest. Computing it from either input
+at recovery time does not establish the parent identity and must not be used.
 
 The combined result spans two process windows. It remains an exposed-task
 diagnostic, not a heldout comparison. A single validated repair shows that the

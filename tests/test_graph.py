@@ -78,3 +78,12 @@ def test_parser_rejects_source_swapped_to_symlink_before_open(
     monkeypatch.setattr("cegraph.parser.os.open", swap_then_open)
     with pytest.raises(ValueError, match="changed or became unsafe"):
         parse_python_file(tmp_path, source)
+
+
+def test_parser_rejects_hardlinked_source(tmp_path: Path) -> None:
+    source = tmp_path / "source.py"
+    source.write_text("value = 1\n")
+    os.link(source, tmp_path / "second-name.py")
+
+    with pytest.raises(ValueError, match="single-link regular file"):
+        parse_python_file(tmp_path, source)

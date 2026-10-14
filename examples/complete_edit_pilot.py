@@ -7,6 +7,7 @@ recovery executor verifies every original source hash before reconstruction.
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
 import os
 import shutil
@@ -56,7 +57,10 @@ def _read_regular(path: Path) -> bytes:
 
 
 def verify_parent_evidence(
-    interrupted: Path, parent_manifest: Path, source_root: Path
+    interrupted: Path,
+    parent_manifest: Path,
+    expected_parent_manifest_sha256: str,
+    source_root: Path,
 ) -> dict[str, bytes]:
     """Verify independently supplied parent identity and exact immutable artifacts."""
     parent = interrupted.resolve(strict=True)
@@ -66,6 +70,8 @@ def verify_parent_evidence(
     if manifest_resolved.is_relative_to(parent):
         raise ValueError("Parent manifest must be supplied outside the parent artifact directory")
     manifest_bytes = _read_regular(parent_manifest)
+    if not hmac.compare_digest(digest_bytes(manifest_bytes), expected_parent_manifest_sha256):
+        raise ValueError("Parent manifest digest differs from the independently supplied digest")
     manifest = json.loads(manifest_bytes)
     required = {"schema", "parent_directory", "artifacts"}
     if not isinstance(manifest, dict) or set(manifest) != required:
@@ -124,14 +130,19 @@ def missing_cell(rows: list[dict], task_ids: list[str]) -> tuple[str, str, int, 
 
 
 def run(
-    repo: Path, interrupted: Path, output: Path, tokenizer: Path, parent_manifest: Path
+    repo: Path,
+    interrupted: Path,
+    output: Path,
+    tokenizer: Path,
+    parent_manifest: Path,
+    parent_manifest_sha256: str,
 ) -> dict:
     root = Path(__file__).resolve().parents[1]
     if subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip():
         raise ValueError("Freeze recovery executor before inference")
     if output.exists() or (interrupted / "summary.json").exists():
         raise ValueError("Use fresh output and an incomplete original pilot")
-    parent = verify_parent_evidence(interrupted, parent_manifest, root)
+    parent = verify_parent_evidence(interrupted, parent_manifest, parent_manifest_sha256, root)
     protocol = json.loads(parent["protocol.json"])
     if digest_bytes(_read_regular(MANIFEST)) != protocol["manifest_sha256"]:
         raise ValueError("Frozen manifest changed")
@@ -194,9 +205,7 @@ def run(
             "restoration": asdict(restoration),
         }
         append_row(output / "controls.jsonl", control)
-        old_controls = [
-            json.loads(x) for x in parent["controls.jsonl"].decode().splitlines()
-        ]
+        old_controls = [json.loads(x) for x in parent["controls.jsonl"].decode().splitlines()]
         previous = next(c for c in old_controls if c["task_id"] == task_id)
         if not (
             baseline.passed
@@ -280,13 +289,21 @@ if __name__ == "__main__":
     for name in ("repo", "interrupted", "output", "tokenizer"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--parent-manifest", type=Path, required=True)
+    parser.add_argument("--parent-manifest-sha256", required=True)
     parser.add_argument("--allow-local-execution", action="store_true")
     args = parser.parse_args()
     if not args.allow_local_execution:
         parser.error("Explicit local execution acknowledgement is required")
     print(
         json.dumps(
-            run(args.repo, args.interrupted, args.output, args.tokenizer, args.parent_manifest),
+            run(
+                args.repo,
+                args.interrupted,
+                args.output,
+                args.tokenizer,
+                args.parent_manifest,
+                args.parent_manifest_sha256,
+            ),
             indent=2,
         )
     )
