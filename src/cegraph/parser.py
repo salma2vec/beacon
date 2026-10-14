@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -64,7 +65,14 @@ class ModuleParser(ast.NodeVisitor):
         self.module_name = module_name_for_path(file_path, repo_root)
         self.tree = ast.parse(source)
         self.lines = source.splitlines()
+        # AST columns count UTF-8 bytes and its line splitter ignores form feeds
+        # and Unicode line separators. Cache those exact lines once, rather than
+        # having ast.get_source_segment rescan the file for every definition.
+        self._source_lines = [
+            match[0].encode("utf-8") for match in re.finditer(r"(.*?(?:\r\n|\n|\r|$))", source)
+        ]
         self.nodes: list[Node] = []
+        self._nodes_by_id: dict[str, Node] = {}
         self.pending_edges: list[PendingEdge] = []
         self.local_symbols: dict[str, str] = {}
         self.scope_stack: list[str] = []
@@ -84,6 +92,7 @@ class ModuleParser(ast.NodeVisitor):
             docstring=ast.get_docstring(self.tree),
         )
         self.nodes.append(module_node)
+        self._nodes_by_id[module_node.id] = module_node
         self.local_symbols[module_qualified_name] = module_node.id
         self.node_kinds[module_node.id] = module_node.kind
 
@@ -102,9 +111,24 @@ class ModuleParser(ast.NodeVisitor):
         )
 
     def _source_segment(self, node: ast.AST) -> str:
-        segment = ast.get_source_segment(self.source, node)
-        if segment is not None:
-            return segment
+        lineno: int | None = getattr(node, "lineno", None)
+        end_lineno: int | None = getattr(node, "end_lineno", None)
+        col: int | None = getattr(node, "col_offset", None)
+        end_col: int | None = getattr(node, "end_col_offset", None)
+        if (
+            lineno is not None
+            and end_lineno is not None
+            and col is not None
+            and end_col is not None
+        ):
+            first, last = lineno - 1, end_lineno - 1
+            if first == last:
+                return self._source_lines[first][col:end_col].decode("utf-8")
+            return b"".join(
+                [self._source_lines[first][col:]]
+                + self._source_lines[first + 1 : last]
+                + [self._source_lines[last][:end_col]]
+            ).decode("utf-8")
         start = getattr(node, "lineno", 1) - 1
         end = getattr(node, "end_lineno", start + 1)
         return "\n".join(self.lines[start:end])
@@ -131,13 +155,14 @@ class ModuleParser(ast.NodeVisitor):
             else None,
         )
         self.nodes.append(created)
+        self._nodes_by_id[identifier] = created
         self.local_symbols[node_name] = identifier
         self.node_kinds[identifier] = kind
         return identifier
 
     @property
     def nodes_by_id(self) -> dict[str, Node]:
-        return {node.id: node for node in self.nodes}
+        return self._nodes_by_id
 
     def _add_pending_edge(
         self,

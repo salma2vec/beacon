@@ -5,10 +5,16 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+from dataclasses import asdict
 from pathlib import Path
 
 from cegraph.evaluation import repo_snapshot
-from cegraph.mutations import build_task_records
+from cegraph.mutations import (
+    MutationDiscoveryLimitError,
+    MutationDiscoveryLimits,
+    build_task_records,
+    task_record_dict,
+)
 
 
 def current_commit(repo_root: Path) -> str:
@@ -29,39 +35,41 @@ def main(argv: list[str] | None = None) -> Path:
     parser.add_argument("--budgets", required=True)
     parser.add_argument("--output-file", required=True)
     parser.add_argument("--query-type", default="exact")
+    for name, default in asdict(MutationDiscoveryLimits()).items():
+        parser.add_argument(
+            "--" + name.replace("_", "-"),
+            type=int,
+            default=default,
+            help=f"Exhaustive discovery budget (default: {default}); exceeding it fails the run",
+        )
     args = parser.parse_args(argv)
 
     repo_root = Path(args.repo_root)
-    budgets = [int(part) for part in args.budgets.split(",") if part]
+    try:
+        budgets = [int(part) for part in args.budgets.split(",") if part]
+        limits = MutationDiscoveryLimits(
+            **{name: getattr(args, name) for name in asdict(MutationDiscoveryLimits())}
+        )
+    except ValueError as error:
+        parser.error(str(error))
     commit = current_commit(repo_root)
     with repo_snapshot(repo_root, commit) as snapshot:
-        tasks = build_task_records(
-            repo=args.repo_name,
-            commit=commit,
-            repo_root=snapshot,
-            budgets=budgets,
-            query_type=args.query_type,
-        )
+        try:
+            tasks = build_task_records(
+                repo=args.repo_name,
+                commit=commit,
+                repo_root=snapshot,
+                budgets=budgets,
+                query_type=args.query_type,
+                limits=limits,
+            )
+        except (MutationDiscoveryLimitError, ValueError) as error:
+            parser.error(str(error))
     output_path = Path(args.output_file)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
         for task in tasks:
-            handle.write(
-                json.dumps(
-                    {
-                        "repo": task.repo,
-                        "commit": task.commit,
-                        "bug_location": task.bug_location,
-                        "mutation_type": task.mutation_type,
-                        "original_line": task.original_line,
-                        "mutated_line": task.mutated_line,
-                        "token_budget": task.token_budget,
-                        "query_type": task.query_type,
-                        "metadata": task.metadata,
-                    }
-                )
-                + "\n"
-            )
+            handle.write(json.dumps(task_record_dict(task)) + "\n")
     return output_path
 
 
