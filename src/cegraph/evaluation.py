@@ -34,7 +34,7 @@ def task_target(repo_root: Path, task: TaskRecord) -> Path:
     if relative.suffix != ".py" or any(p.startswith(".") for p in relative.parts):
         raise ValueError("Task target must be a visible Python source file")
     if (
-        relative.name == "conftest.py"
+        relative.name in {"conftest.py", "test.py", "tests.py"}
         or relative.name.endswith("_test.py")
         or any(p in {"tests", "test"} or p.startswith("test_") for p in relative.parts)
     ):

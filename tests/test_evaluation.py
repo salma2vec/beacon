@@ -330,7 +330,9 @@ def test_syntax_check_never_writes_through_bytecode_directory_symlink(tmp_path: 
     assert list(outside.iterdir()) == [marker]
 
 
-@pytest.mark.parametrize("filename", ["conftest.py", "calc_test.py", "pkg/conftest.py"])
+@pytest.mark.parametrize(
+    "filename", ["conftest.py", "calc_test.py", "pkg/conftest.py", "test.py", "tests.py"]
+)
 def test_task_cannot_designate_pytest_verifier_as_repair_source(
     tmp_path: Path, filename: str
 ) -> None:

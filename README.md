@@ -98,9 +98,16 @@ The OpenAI adapter requires an API key and can incur API charges.
 
 For an already installed local Ollama model, use `--provider ollama --model <tag>`.
 The adapter contacts only `127.0.0.1:11434`, rejects redirects and cloud-model routes,
-checks the installed digest, and records native input/output token counts and stop
+checks the service-reported digest, and records native input/output token counts and stop
 reason. It never installs a model or falls back to an API provider. Requests near
 the configured context limit fail; truncated output cannot become a scored patch.
+The local listener must be trusted. Plain loopback HTTP does not authenticate its
+owner; another local process can impersonate Ollama and receive prompts. Digest
+continuity and reported routing metadata are not independent model attestation.
+Responses explicitly record `server_authenticated=false` and
+`model_identity_source=local_service_self_report`. Use an isolated host or network
+namespace for sensitive repositories; this adapter does not provide an authenticated
+multi-user service boundary.
 The public-repository pilot additionally verifies exact full-prompt native counts
 using a pinned Qwen tokenizer. General Ollama use without a matching tokenizer
 counter records `native_prompt_verified=false`; a count below capacity alone is

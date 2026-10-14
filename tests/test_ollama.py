@@ -35,6 +35,8 @@ def test_local_model_keeps_digest_native_counts_and_raw_response(monkeypatch):
     assert result.patch_text == "--- a/file.py\n+++ b/file.py"
     assert result.raw_response.startswith("```diff")
     assert result.metadata["model_digest"] == "a" * 64
+    assert result.metadata["server_authenticated"] is False
+    assert result.metadata["model_identity_source"] == "local_service_self_report"
     assert result.metadata["prompt_eval_count"] == 11
     assert result.metadata["eval_count"] == 5
 

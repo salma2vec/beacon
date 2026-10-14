@@ -62,7 +62,9 @@ class OllamaRepairClient:
     """One-shot requests to an already installed model on the local Ollama server.
 
     This adapter never downloads a model or falls back to a paid provider. The
-    endpoint is fixed to loopback, and each request checks the installed digest.
+    endpoint is fixed to loopback, and each request checks the reported digest.
+    The operator must trust that listener: HTTP does not authenticate it, and
+    a self-reported digest is continuity metadata, not model attestation.
     Local model output still needs the same untrusted-code evaluation controls.
     """
 
@@ -89,7 +91,8 @@ class OllamaRepairClient:
         request = urllib.request.Request(
             self.endpoint + path, data=data, headers={"Content-Type": "application/json"}
         )
-        # Disable configured proxies: repository context stays on loopback.
+        # Disable configured proxies: this client's requests stay on loopback.
+        # This cannot prevent an untrusted listener from forwarding the prompt.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
         with opener.open(request, timeout=self.timeout) as response:
             raw = response.read(1_048_577)
@@ -149,6 +152,8 @@ class OllamaRepairClient:
             self.model,
             {
                 "provider": "ollama_loopback",
+                "server_authenticated": False,
+                "model_identity_source": "local_service_self_report",
                 "model_digest": self.digest,
                 "runtime_version": self.runtime_version,
                 "options": self.options,
