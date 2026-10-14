@@ -1,0 +1,14 @@
+[extend]
+useDefault = true
+
+# Public native-tokenizer asset checksum, not a credential. Require both the
+# exact result path and exact pinned SHA256; keep all default rules enabled.
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Pinned public Qwen tokenizer SHA256"
+condition = "AND"
+paths = ['''^examples/results/boltons-pilot/qwen05-summary\.json$''']
+regexTarget = "secret"
+regexes = ['''^c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539$''']

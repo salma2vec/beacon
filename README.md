@@ -17,6 +17,12 @@ introduces a failing mutation, and evaluates a known correct repair across retri
 methods and budgets. It needs no API key. Its results are **harness controls**, not
 LLM scores or evidence that one retrieval method is better.
 
+A [real-repository pilot](examples/results/boltons-pilot/README.md) adds three
+pinned Boltons mutations, upstream behavioral tests, 18 passing known-repair
+controls and an actual local-model trial. It keeps model failures, prompt/response
+records, target-span coverage and native tokenizer checks. This small, hand-selected
+pilot is not a held-out real-issue benchmark or evidence of a retrieval advantage.
+
 ## Library
 
 ```python
@@ -64,7 +70,8 @@ not supported for scoring. Install the target repository dependencies into the
 harness environment. Plugin autoload and configured `addopts` are disabled; pass
 test paths/node IDs and simple reporting flags (`-q`, `-v`, `--tb=short`) explicitly.
 The bundled `eval_tasks_full.jsonl` is intentionally empty: there is no released
-large-scale validated task corpus or measured LLM benchmark in this repository.
+large-scale validated task corpus in this repository. The separate Boltons pilot
+manifest is intentionally limited to three controlled regressions.
 
 ```bash
 python -m paper.experiments.benchmark \
@@ -83,6 +90,17 @@ your user's filesystem and network permissions. Use a disposable external contai
 for untrusted code. Subprocesses have a credential-free environment, temporary home,
 60-second default timeout and 1 MiB captured-output limit; these are not a sandbox.
 The OpenAI adapter requires an API key and can incur API charges.
+
+For an already installed local Ollama model, use `--provider ollama --model <tag>`.
+The adapter contacts only `127.0.0.1:11434`, rejects redirects and cloud-model routes,
+checks the installed digest, and records native input/output token counts and stop
+reason. It never installs a model or falls back to an API provider. Requests near
+the configured context limit fail; truncated output cannot become a scored patch.
+The public-repository pilot additionally verifies exact full-prompt native counts
+using a pinned Qwen tokenizer. General Ollama use without a matching tokenizer
+counter records `native_prompt_verified=false`; a count below capacity alone is
+not a full truncation guarantee. Source execution still needs the same explicit
+local-execution acknowledgement.
 
 Each scored task must complete a nonempty pytest suite before mutation, then
 complete the same suite with failures after mutation. A fresh JUnit report outside

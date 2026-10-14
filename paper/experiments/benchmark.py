@@ -12,7 +12,7 @@ from pathlib import Path
 
 from cegraph import CodebaseGraph, assemble_context, available_methods
 from cegraph.evaluation import apply_mutation, evaluate_patch, repo_snapshot, run_pytest_tests
-from cegraph.llm import EchoRepairClient, OpenAIRepairClient, RepairClient
+from cegraph.llm import EchoRepairClient, OllamaRepairClient, OpenAIRepairClient, RepairClient
 from cegraph.models import BenchmarkResult, RepairPrompt, TaskRecord, task_identifier
 
 
@@ -74,9 +74,11 @@ def build_prompt(task: TaskRecord, query: str, context_text: str) -> RepairPromp
     return RepairPrompt(system=system, user=user)
 
 
-def get_repair_client(dry_run: bool, model: str) -> RepairClient:
+def get_repair_client(dry_run: bool, model: str, provider: str = "openai") -> RepairClient:
     if dry_run:
         return EchoRepairClient()
+    if provider == "ollama":
+        return OllamaRepairClient(model=model)
     return OpenAIRepairClient(model=model)
 
 
@@ -106,7 +108,7 @@ def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None =
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     results_path = output_dir / "results.jsonl"
-    repair_client = repair_client or get_repair_client(args.dry_run, args.model)
+    repair_client = repair_client or get_repair_client(args.dry_run, args.model, args.provider)
     base = Path(args.repos_dir).resolve()
     with results_path.open("w", encoding="utf-8") as handle:
         for task in tasks:
@@ -207,6 +209,8 @@ def run_benchmark(args: argparse.Namespace, repair_client: RepairClient | None =
                                     "oracle_query": query_type == "exact"
                                     or (query_type == "dev_report" and not task.prompt),
                                     "model": response.model,
+                                    "model_metadata": response.metadata,
+                                    "raw_response": response.raw_response,
                                     "alpha": args.alpha,
                                     "token_codec": "cl100k_base",
                                     "test_timeout_seconds": args.test_timeout,
@@ -237,6 +241,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--query-types", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--model", default="gpt-4.1-mini")
+    parser.add_argument("--provider", choices=("openai", "ollama"), default="openai")
     parser.add_argument("--alpha", type=float, default=0.5)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-eval", action="store_true")

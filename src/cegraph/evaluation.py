@@ -66,13 +66,14 @@ def apply_mutation(repo_root: Path, task: TaskRecord) -> None:
 def apply_patch_text(
     repo_root: Path, task: TaskRecord, response: RepairResponse
 ) -> tuple[bool, str]:
-    patch_text = response.patch_text.strip()
-    if not patch_text:
+    # A trailing space-only line is meaningful unified-diff context, not padding.
+    patch_text = response.patch_text.strip("\r\n")
+    if not patch_text.strip():
         return False, "empty patch"
     try:
         target = task_target(repo_root, task)
         allowed = target.relative_to(repo_root).as_posix()
-        if patch_text.startswith("{"):
+        if patch_text.lstrip().startswith("{"):
             payload = json.loads(patch_text)
             if not isinstance(payload, dict) or set(payload) != {"file_path", "content"}:
                 return False, "replacement must contain only file_path and content"

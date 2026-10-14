@@ -1,0 +1,19 @@
+{
+  "kind": "infrastructure_failure_no_model_score",
+  "model": "llama3:latest",
+  "model_digest": "365c0bd3c000a25d28ddbf732fe1c6add414de7275464c4e4d1c3b5fcb5d8ad1",
+  "runtime": "Ollama 0.40.1",
+  "hardware": "Apple M1, 8 GB unified memory",
+  "options": {
+    "seed": 42,
+    "temperature": 0,
+    "num_ctx": 4096,
+    "num_predict": 512
+  },
+  "request_timeout_seconds": 180,
+  "exception": "TimeoutError waiting for first /api/chat response",
+  "completed_attempts": 0,
+  "observed_resource_issue": "Available disk reached 128 MiB during load; host became slow. Process later exited and no Ollama model remained loaded.",
+  "action": "Stopped this protocol; no retry of the 8B model. Subsequent smaller-model pilot is a separate experiment.",
+  "measured_scores": null
+}

@@ -1,0 +1,65 @@
+{
+  "kind": "local_model_mutation_pilot",
+  "python": "3.11.15",
+  "versions": {
+    "beacon": "0.1.0",
+    "pytest": "8.4.2",
+    "tiktoken": "0.14.0"
+  },
+  "repo_url": "https://github.com/mahmoud/boltons",
+  "commit": "c23dbdadb6fecdf505eb4231559561913b84c13f",
+  "task_count": 3,
+  "attempt_count": 18,
+  "native_tokenizer_sha256": "c0382117ea329cdf097041132f6d735924b697924d6f6fc3945713e96ce87539",
+  "conditions": [
+    {
+      "method": "no_retrieval",
+      "budget": 256,
+      "passes": 0,
+      "target_spans": 0,
+      "tasks": 3
+    },
+    {
+      "method": "no_retrieval",
+      "budget": 1024,
+      "passes": 0,
+      "target_spans": 0,
+      "tasks": 3
+    },
+    {
+      "method": "bm25",
+      "budget": 256,
+      "passes": 0,
+      "target_spans": 2,
+      "tasks": 3
+    },
+    {
+      "method": "bm25",
+      "budget": 1024,
+      "passes": 0,
+      "target_spans": 3,
+      "tasks": 3
+    },
+    {
+      "method": "bca",
+      "budget": 256,
+      "passes": 0,
+      "target_spans": 0,
+      "tasks": 3
+    },
+    {
+      "method": "bca",
+      "budget": 1024,
+      "passes": 0,
+      "target_spans": 1,
+      "tasks": 3
+    }
+  ],
+  "limitations": [
+    "Three hand-selected mutations in one repository; not natural or held-out issues.",
+    "Function-named reports, public tests and docstrings can reveal intended behavior.",
+    "No-retrieval prompts repeat across budgets and are not independent samples.",
+    "One fixed-seed model completion per condition; no retries or iterative tools.",
+    "Token budgets use cl100k_base, while Ollama also reports its native token counts."
+  ]
+}

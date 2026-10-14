@@ -151,6 +151,7 @@ class RepairResponse:
     patch_text: str
     raw_response: str
     model: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True, frozen=True)

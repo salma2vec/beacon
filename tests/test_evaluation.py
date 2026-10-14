@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import json
 import shlex
 import subprocess
@@ -21,6 +22,25 @@ from cegraph.evaluation import (
 from cegraph.models import RepairPrompt, RepairResponse, TaskRecord
 from paper.experiments.benchmark import build_parser, run_benchmark
 from paper.experiments.merge_and_report import aggregate_pass_rates
+
+
+def test_diff_preserves_trailing_blank_context_line(tmp_path: Path) -> None:
+    root, task = fixture_repo(tmp_path)
+    old = "def add(a, b):\n    return a - b\n\n"
+    fixed = "def add(a, b):\n    return a + b\n\n"
+    (root / "calc.py").write_text(old)
+    patch = "".join(
+        difflib.unified_diff(
+            old.splitlines(keepends=True),
+            fixed.splitlines(keepends=True),
+            "a/calc.py",
+            "b/calc.py",
+        )
+    )
+    assert patch.endswith(" \n")
+    passed, reason = apply_patch_text(root, task, RepairResponse(patch, patch, "control"))
+    assert passed, reason
+    assert (root / "calc.py").read_text() == fixed
 
 
 def fixture_repo(tmp_path: Path) -> tuple[Path, TaskRecord]:
